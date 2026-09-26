@@ -11,8 +11,10 @@ import net.minecraft.network.chat.Component;
 
 import java.nio.file.Path;
 
-import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.argument;
-import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.literal;
+// CHECK fixed: ClientCommandManager was renamed to ClientCommands in 26.2
+// (per Fabric's own porting guide).
+import static net.fabricmc.fabric.api.client.command.v2.ClientCommands.argument;
+import static net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal;
 
 public class ChunkVaultClient implements ClientModInitializer {
 
