@@ -23,21 +23,23 @@ import java.io.DataInputStream;
  * WorldGenSettings (dimension/biome-source/noise config) — get one field
  * wrong and singleplayer may refuse to open the world or silently ignore
  * our region files and regenerate terrain instead. To sidestep guessing
- * this, if a file named "template_level.dat" is placed next to the target
- * world (copied from ANY freshly-created 26.2 singleplayer world — the
- * seed/settings don't matter, we already have the actual chunks), we reuse
- * its WorldGenSettings verbatim and only patch identity/spawn fields.
- * Without a template we fall back to a hand-built minimal version — more
- * likely to need a manual fix, see README.
+ * this entirely, we grab WorldGenSettings from any world that already
+ * exists in the player's own saves/ folder (no manual copying needed —
+ * every player has at least one world already, and the seed/settings
+ * don't matter since we already have the real chunks). A manually placed
+ * "template_level.dat" next to the target world still takes priority if
+ * present. Only if neither exists do we fall back to a hand-built minimal
+ * version, which is the option most likely to need a manual fix.
  */
 public final class LevelDatWriter {
 
     public static void write(Path worldDir, String levelName, int spawnX, int spawnY, int spawnZ) {
+        write(worldDir, null, levelName, spawnX, spawnY, spawnZ);
+    }
+
+    public static void write(Path worldDir, Path gameDir, String levelName, int spawnX, int spawnY, int spawnZ) {
         try {
-            Path template = worldDir.resolve("template_level.dat");
-            CompoundTag root = Files.exists(template)
-                    ? loadTemplate(template)
-                    : buildFromScratch();
+            CompoundTag root = loadBestAvailableTemplate(worldDir, gameDir);
 
             // Fixed: getCompound(...) now returns Optional<CompoundTag> instead
             // of the tag directly (or an empty compound if missing).
@@ -57,6 +59,58 @@ public final class LevelDatWriter {
             }
         } catch (IOException e) {
             System.err.println("[ChunkVault] failed to write level.dat: " + e);
+        }
+    }
+
+    private static CompoundTag loadBestAvailableTemplate(Path worldDir, Path gameDir) throws IOException {
+        // 1) explicit manual override, if the user placed one
+        Path manual = worldDir.resolve("template_level.dat");
+        if (Files.exists(manual)) {
+            try {
+                return loadTemplate(manual);
+            } catch (IOException e) {
+                System.err.println("[ChunkVault] template_level.dat unreadable, falling back: " + e);
+            }
+        }
+
+        // 2) auto-discovered: any existing world in the player's own saves/
+        if (gameDir != null) {
+            Path savesDir = gameDir.resolve("saves");
+            CompoundTag fromSaves = findAnyLevelDatUnder(savesDir);
+            if (fromSaves != null) {
+                return fromSaves;
+            }
+        }
+
+        // 3) last resort: hand-built, riskiest option (see class doc)
+        return buildFromScratch();
+    }
+
+    /** Returns the parsed level.dat of the first (or most recently played) world found, or null. */
+    private static CompoundTag findAnyLevelDatUnder(Path savesDir) {
+        if (!Files.isDirectory(savesDir)) {
+            return null;
+        }
+        try (var worlds = Files.list(savesDir)) {
+            Path candidate = worlds
+                    .filter(Files::isDirectory)
+                    .map(dir -> dir.resolve("level.dat"))
+                    .filter(Files::isRegularFile)
+                    .max((a, b) -> {
+                        try {
+                            return Files.getLastModifiedTime(a).compareTo(Files.getLastModifiedTime(b));
+                        } catch (IOException e) {
+                            return 0;
+                        }
+                    })
+                    .orElse(null);
+            if (candidate == null) {
+                return null;
+            }
+            return loadTemplate(candidate);
+        } catch (IOException e) {
+            System.err.println("[ChunkVault] could not scan saves/ for a level.dat template: " + e);
+            return null;
         }
     }
 
