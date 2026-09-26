@@ -45,7 +45,7 @@ public final class RecordingState {
             return false;
         }
         Path target = gameDir.resolve("chunkvault").resolve(sanitize(name));
-        this.saveManager = new WorldSaveManager(target, name);
+        this.saveManager = new WorldSaveManager(target, gameDir, name);
         this.saveManager.init();
         this.sessionName = name;
         active.set(true);
