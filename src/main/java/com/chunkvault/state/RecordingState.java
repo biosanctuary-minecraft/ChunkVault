@@ -2,9 +2,11 @@ package com.chunkvault.state;
 
 import com.chunkvault.save.WorldSaveManager;
 import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -52,17 +54,13 @@ public final class RecordingState {
         return true;
     }
 
-    public synchronized Path stop(BlockPos spawnPos) {
+    public synchronized Path stop(BlockPos spawnPos, UUID uuid, CompoundTag playerTag) {
         if (!active.get()) {
             return null;
         }
         active.set(false);
         Path dir = saveManager.rootDir();
-        if (spawnPos != null) {
-            saveManager.closeAndFinish(spawnPos);
-        } else {
-            saveManager.closeAndFinish();
-        }
+        saveManager.closeAndFinish(spawnPos, uuid, playerTag);
         saveManager = null;
         sessionName = null;
         return dir;
