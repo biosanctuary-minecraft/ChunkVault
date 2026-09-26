@@ -4,6 +4,7 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtIo;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.chunk.LevelChunk;
 
 import java.io.ByteArrayOutputStream;
@@ -19,11 +20,16 @@ public final class WorldSaveManager {
     private final Path rootDir;
     private final Path gameDir;
     private final String levelName;
-    private final Map<Long, SimpleRegionFile> openRegions = new ConcurrentHashMap<>();
+    private final Map<String, SimpleRegionFile> openRegions = new ConcurrentHashMap<>();
 
     // Track how many chunks/chests we've captured, for /chunkvault status.
     private volatile int chunksSaved = 0;
     private volatile int chestsSeen = 0;
+
+    // Remembers whether we've actually seen the player in the Overworld
+    // during this session, so closeAndFinish() knows whether the captured
+    // spawnPos is meaningful (see class doc on dimension-specific spawn).
+    private volatile boolean sawOverworld = false;
 
     public WorldSaveManager(Path rootDir, Path gameDir, String levelName) {
         this.rootDir = rootDir;
@@ -57,6 +63,28 @@ public final class WorldSaveManager {
     }
 
     /**
+     * Region folder for a dimension, matching vanilla's on-disk layout:
+     * Overworld chunks live directly under region/, Nether under
+     * DIM-1/region/, the End under DIM1/region/, and any custom dimension
+     * under the modern dimensions/<namespace>/<path>/region/ layout.
+     * This is the fix for chunks captured in a dimension other than the
+     * Overworld silently ending up mixed into the Overworld's region files.
+     */
+    private static String regionFolderFor(Level level) {
+        var dimensionKey = level.dimension();
+        if (dimensionKey.equals(Level.OVERWORLD)) {
+            return "region";
+        } else if (dimensionKey.equals(Level.NETHER)) {
+            return "DIM-1/region";
+        } else if (dimensionKey.equals(Level.END)) {
+            return "DIM1/region";
+        } else {
+            var id = dimensionKey.location();
+            return "dimensions/" + id.getNamespace() + "/" + id.getPath() + "/region";
+        }
+    }
+
+    /**
      * Serializes and appends one chunk to the correct region file.
      * Safe to call repeatedly for the same chunk (e.g. re-entering an area) —
      * SimpleRegionFile just appends a new copy and updates the offset table,
@@ -65,6 +93,10 @@ public final class WorldSaveManager {
      */
     public synchronized void saveChunk(ClientLevel level, LevelChunk chunk) {
         try {
+            if (level.dimension().equals(Level.OVERWORLD)) {
+                sawOverworld = true;
+            }
+
             CompoundTag tag = ChunkNbtWriter.write(level, chunk);
 
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
@@ -75,11 +107,14 @@ public final class WorldSaveManager {
             int chunkZ = chunk.getPos().z();
             int regionX = Math.floorDiv(chunkX, 32);
             int regionZ = Math.floorDiv(chunkZ, 32);
-            long regionKey = (((long) regionX) << 32) ^ (regionZ & 0xFFFFFFFFL);
+            String regionFolder = regionFolderFor(level);
+            String regionKey = regionFolder + ":" + regionX + "," + regionZ;
 
             SimpleRegionFile region = openRegions.computeIfAbsent(regionKey, k -> {
                 try {
-                    Path file = rootDir.resolve("region").resolve("r." + regionX + "." + regionZ + ".mca");
+                    Path dir = rootDir.resolve(regionFolder);
+                    Files.createDirectories(dir);
+                    Path file = dir.resolve("r." + regionX + "." + regionZ + ".mca");
                     return new SimpleRegionFile(file);
                 } catch (IOException e) {
                     throw new RuntimeException(e);
@@ -95,6 +130,16 @@ public final class WorldSaveManager {
         }
     }
 
+    /**
+     * @param spawnPos the player's position when /chunkvault stop was run,
+     *                 or null if it isn't known to be an Overworld position
+     *                 (level.dat's SpawnX/Y/Z is always interpreted as an
+     *                 Overworld coordinate — writing Nether/End coordinates
+     *                 there just drops the player in unrelated Overworld
+     *                 terrain, which is exactly the bug this parameter
+     *                 avoids). Pass null and the template's own spawn point
+     *                 is kept instead.
+     */
     public synchronized void closeAndFinish(BlockPos spawnPos) {
         for (SimpleRegionFile region : openRegions.values()) {
             try {
@@ -104,11 +149,11 @@ public final class WorldSaveManager {
             }
         }
         openRegions.clear();
-        LevelDatWriter.write(rootDir, gameDir, levelName, spawnPos.getX(), spawnPos.getY(), spawnPos.getZ());
+        LevelDatWriter.write(rootDir, gameDir, levelName, spawnPos);
     }
 
     // Overload used by RecordingState when no player position is available.
     public void closeAndFinish() {
-        closeAndFinish(new BlockPos(0, 64, 0));
+        closeAndFinish(null);
     }
 }
