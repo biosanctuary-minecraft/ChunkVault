@@ -17,6 +17,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class WorldSaveManager {
 
     private final Path rootDir;
+    private final Path gameDir;
     private final String levelName;
     private final Map<Long, SimpleRegionFile> openRegions = new ConcurrentHashMap<>();
 
@@ -24,8 +25,9 @@ public final class WorldSaveManager {
     private volatile int chunksSaved = 0;
     private volatile int chestsSeen = 0;
 
-    public WorldSaveManager(Path rootDir, String levelName) {
+    public WorldSaveManager(Path rootDir, Path gameDir, String levelName) {
         this.rootDir = rootDir;
+        this.gameDir = gameDir;
         this.levelName = levelName;
     }
 
@@ -102,7 +104,7 @@ public final class WorldSaveManager {
             }
         }
         openRegions.clear();
-        LevelDatWriter.write(rootDir, levelName, spawnPos.getX(), spawnPos.getY(), spawnPos.getZ());
+        LevelDatWriter.write(rootDir, gameDir, levelName, spawnPos.getX(), spawnPos.getY(), spawnPos.getZ());
     }
 
     // Overload used by RecordingState when no player position is available.
