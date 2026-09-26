@@ -57,7 +57,5 @@ tasks.withType(JavaCompile).configureEach {
 }
 
 jar {
-    from("LICENSE") {
-        rename { "${it}_${archivesName}" }
-    }
+    from("LICENSE")
 }
