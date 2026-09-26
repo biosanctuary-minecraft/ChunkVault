@@ -56,11 +56,28 @@ public class ChunkVaultClient implements ClientModInitializer {
         int chests = manager.chestsSeen();
 
         var player = Minecraft.getInstance().player;
-        var spawnPos = player != null ? player.blockPosition() : null;
+        var level = Minecraft.getInstance().level;
+        // level.dat's spawn point is always an Overworld coordinate — only
+        // pass the player's position along if they're actually standing in
+        // the Overworld right now, otherwise we'd write e.g. Nether
+        // coordinates as if they were Overworld ones (see chat history for
+        // why that's wrong) and the template's own spawn is kept instead.
+        boolean inOverworld = level != null && level.dimension().equals(net.minecraft.world.level.Level.OVERWORLD);
+        var spawnPos = (player != null && inOverworld) ? player.blockPosition() : null;
 
         Path dir = RecordingState.get().stop(spawnPos);
         source.sendFeedback(Component.literal(
                 "§a[ChunkVault] Готово: " + chunks + " чанков, " + chests + " контейнеров. Сохранено в: " + dir));
+
+        if (!inOverworld && player != null) {
+            String dimName = level.dimension().location().toString();
+            source.sendFeedback(Component.literal(
+                    "§e[ChunkVault] Ты был не в Овервёрлде (" + dimName + "), поэтому точку спавна не трогал — " +
+                    "твои координаты там были " + player.blockPosition().toShortString() +
+                    ". Зайдя в мир, телепортируйся туда командой (например: " +
+                    "/execute in " + dimName + " run tp " + player.blockPosition().getX() + " " +
+                    player.blockPosition().getY() + " " + player.blockPosition().getZ() + ")."));
+        }
         return 1;
     }
 
