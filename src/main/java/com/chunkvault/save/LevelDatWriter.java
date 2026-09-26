@@ -39,7 +39,9 @@ public final class LevelDatWriter {
                     ? loadTemplate(template)
                     : buildFromScratch();
 
-            CompoundTag data = root.getCompound("Data");
+            // Fixed: getCompound(...) now returns Optional<CompoundTag> instead
+            // of the tag directly (or an empty compound if missing).
+            CompoundTag data = root.getCompound("Data").orElseGet(CompoundTag::new);
             data.putString("LevelName", levelName);
             data.putInt("SpawnX", spawnX);
             data.putInt("SpawnY", spawnY);
@@ -71,10 +73,12 @@ public final class LevelDatWriter {
     private static CompoundTag buildFromScratch() {
         CompoundTag data = new CompoundTag();
         data.putInt("version", 19133); // legacy "this is an Anvil-format world" marker
-        data.putInt("DataVersion", SharedConstants.getCurrentVersion().getDataVersion().getVersion());
+        // Fixed: WorldVersion/DataVersion are records now -> dataVersion().version().
+        int dataVersion = SharedConstants.getCurrentVersion().dataVersion().version();
+        data.putInt("DataVersion", dataVersion);
 
         CompoundTag versionTag = new CompoundTag();
-        versionTag.putInt("Id", SharedConstants.getCurrentVersion().getDataVersion().getVersion());
+        versionTag.putInt("Id", dataVersion);
         versionTag.putString("Name", "26.2");
         versionTag.putString("Series", "main");
         versionTag.putBoolean("Snapshot", false);
