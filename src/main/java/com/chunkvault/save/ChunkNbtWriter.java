@@ -34,21 +34,21 @@ import java.util.Map;
  */
 public final class ChunkNbtWriter {
 
-    // CHECK: on some versions WorldVersion#getDataVersion() returns a record
-    // (`DataVersion`) whose accessor is `.version()` rather than `.getVersion()`.
-    // If this line fails to compile, try SharedConstants.getCurrentVersion().getDataVersion().version()
+    // Fixed: WorldVersion and DataVersion are both records as of 1.21.6+,
+    // so the chain is dataVersion() -> version(), not getDataVersion().getVersion().
     private static int currentDataVersion() {
-        return SharedConstants.getCurrentVersion().getDataVersion().getVersion();
+        return SharedConstants.getCurrentVersion().dataVersion().version();
     }
 
     public static CompoundTag write(ClientLevel level, LevelChunk chunk) {
         CompoundTag root = new CompoundTag();
         root.putInt("DataVersion", currentDataVersion());
 
-        root.putInt("xPos", chunk.getPos().x);
-        root.putInt("zPos", chunk.getPos().z);
-        // CHECK: min *section* index (usually -4 for the -64..320 build height).
-        root.putInt("yPos", chunk.getMinSection());
+        // Fixed: ChunkPos.x/z are private now; use the x()/z() accessors.
+        root.putInt("xPos", chunk.getPos().x());
+        root.putInt("zPos", chunk.getPos().z());
+        // Fixed: getMinSection() was renamed to getMinSectionY().
+        root.putInt("yPos", chunk.getMinSectionY());
 
         // CHECK: newer versions namespace the status id ("minecraft:full");
         // older ones used the bare string "full". Try the bare form first if
@@ -58,7 +58,7 @@ public final class ChunkNbtWriter {
 
         ListTag sections = new ListTag();
         LevelChunkSection[] rawSections = chunk.getSections();
-        int minSection = chunk.getMinSection();
+        int minSection = chunk.getMinSectionY();
         for (int i = 0; i < rawSections.length; i++) {
             LevelChunkSection section = rawSections[i];
             if (section == null || section.hasOnlyAir()) {
@@ -139,8 +139,9 @@ public final class ChunkNbtWriter {
         Holder<Biome> biome = section.getNoiseBiome(0, 0, 0);
         CompoundTag out = new CompoundTag();
         ListTag paletteTag = new ListTag();
+        // Fixed: registryOrThrow(...) was renamed to lookupOrThrow(...).
         String key = level.registryAccess()
-                .registryOrThrow(Registries.BIOME)
+                .lookupOrThrow(Registries.BIOME)
                 .getKey(biome.value())
                 .toString();
         paletteTag.add(StringTag.valueOf(key));
