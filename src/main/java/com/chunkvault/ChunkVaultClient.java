@@ -70,7 +70,7 @@ public class ChunkVaultClient implements ClientModInitializer {
                 "§a[ChunkVault] Готово: " + chunks + " чанков, " + chests + " контейнеров. Сохранено в: " + dir));
 
         if (!inOverworld && player != null) {
-            String dimName = level.dimension().location().toString();
+            String dimName = level.dimension().identifier().toString();
             source.sendFeedback(Component.literal(
                     "§e[ChunkVault] Ты был не в Овервёрлде (" + dimName + "), поэтому точку спавна не трогал — " +
                     "твои координаты там были " + player.blockPosition().toShortString() +
