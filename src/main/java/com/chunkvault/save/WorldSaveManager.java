@@ -68,8 +68,9 @@ public final class WorldSaveManager {
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
             NbtIo.write(tag, new DataOutputStream(bytes));
 
-            int chunkX = chunk.getPos().x;
-            int chunkZ = chunk.getPos().z;
+            // Fixed: ChunkPos.x/z are private now; use the x()/z() accessors.
+            int chunkX = chunk.getPos().x();
+            int chunkZ = chunk.getPos().z();
             int regionX = Math.floorDiv(chunkX, 32);
             int regionZ = Math.floorDiv(chunkZ, 32);
             long regionKey = (((long) regionX) << 32) ^ (regionZ & 0xFFFFFFFFL);
