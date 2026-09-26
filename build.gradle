@@ -28,9 +28,13 @@ repositories {
 dependencies {
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
 
-    // Mojang's own (Mojmap) mappings — 26.x ships unobfuscated client jars,
-    // so these are available day-one and don't need a community build number.
-    mappings loom.officialMojangMappings()
+    // No mappings() call on purpose: Minecraft ships fully unobfuscated
+    // starting with 26.1, so there's no separate Mojang-mappings file to
+    // fetch and nothing to remap — the client jar already uses the real
+    // (official) class/method names. Loom 1.15+ detects this automatically.
+    // (Adding loom.officialMojangMappings() here is what caused the
+    // "Failed to find official mojang mappings for 26.2" build failure —
+    // that layer is for pre-26.1 obfuscated versions only.)
 
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
     modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
