@@ -79,7 +79,7 @@ public final class WorldSaveManager {
         } else if (dimensionKey.equals(Level.END)) {
             return "DIM1/region";
         } else {
-            var id = dimensionKey.location();
+            var id = dimensionKey.identifier();
             return "dimensions/" + id.getNamespace() + "/" + id.getPath() + "/region";
         }
     }
