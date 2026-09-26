@@ -57,27 +57,29 @@ public class ChunkVaultClient implements ClientModInitializer {
 
         var player = Minecraft.getInstance().player;
         var level = Minecraft.getInstance().level;
-        // level.dat's spawn point is always an Overworld coordinate — only
-        // pass the player's position along if they're actually standing in
-        // the Overworld right now, otherwise we'd write e.g. Nether
-        // coordinates as if they were Overworld ones (see chat history for
-        // why that's wrong) and the template's own spawn is kept instead.
+
+        java.util.UUID uuid = null;
+        net.minecraft.nbt.CompoundTag playerTag = null;
+        // level.dat's SpawnX/Y/Z only ever addresses the Overworld anyway,
+        // so the real fix for "spawn where I stopped, in whatever dimension"
+        // is writing actual player-position data (see PlayerDataWriter) —
+        // this works for every dimension, not just the Overworld.
         boolean inOverworld = level != null && level.dimension().equals(net.minecraft.world.level.Level.OVERWORLD);
         var spawnPos = (player != null && inOverworld) ? player.blockPosition() : null;
 
-        Path dir = RecordingState.get().stop(spawnPos);
+        if (player != null && level != null) {
+            uuid = Minecraft.getInstance().getUser().getProfileId();
+            playerTag = com.chunkvault.save.PlayerDataWriter.buildPlayerTag(
+                    uuid, player.getX(), player.getY(), player.getZ(),
+                    player.getYRot(), player.getXRot(),
+                    level.dimension().identifier().toString());
+        }
+
+        Path dir = RecordingState.get().stop(spawnPos, uuid, playerTag);
         source.sendFeedback(Component.literal(
                 "§a[ChunkVault] Готово: " + chunks + " чанков, " + chests + " контейнеров. Сохранено в: " + dir));
-
-        if (!inOverworld && player != null) {
-            String dimName = level.dimension().identifier().toString();
-            source.sendFeedback(Component.literal(
-                    "§e[ChunkVault] Ты был не в Овервёрлде (" + dimName + "), поэтому точку спавна не трогал — " +
-                    "твои координаты там были " + player.blockPosition().toShortString() +
-                    ". Зайдя в мир, телепортируйся туда командой (например: " +
-                    "/execute in " + dimName + " run tp " + player.blockPosition().getX() + " " +
-                    player.blockPosition().getY() + " " + player.blockPosition().getZ() + ")."));
-        }
+        source.sendFeedback(Component.literal(
+                "§b[ChunkVault] При заходе в этот мир ты должен оказаться там же, где остановил запись."));
         return 1;
     }
 
