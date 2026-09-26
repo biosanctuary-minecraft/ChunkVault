@@ -55,7 +55,7 @@ public final class WorldSaveManager {
 
     public void init() {
         try {
-            Files.createDirectories(rootDir.resolve("region"));
+            Files.createDirectories(rootDir.resolve("dimensions/minecraft/overworld/region"));
             Files.createDirectories(rootDir.resolve("data"));
         } catch (IOException e) {
             System.err.println("[ChunkVault] could not create save directory " + rootDir + ": " + e);
@@ -63,25 +63,19 @@ public final class WorldSaveManager {
     }
 
     /**
-     * Region folder for a dimension, matching vanilla's on-disk layout:
-     * Overworld chunks live directly under region/, Nether under
-     * DIM-1/region/, the End under DIM1/region/, and any custom dimension
-     * under the modern dimensions/<namespace>/<path>/region/ layout.
-     * This is the fix for chunks captured in a dimension other than the
-     * Overworld silently ending up mixed into the Overworld's region files.
+     * Region folder for a dimension. Fixed: 26.1+ dropped the legacy
+     * region/, DIM-1/, DIM1/ folders entirely — EVERY dimension, including
+     * the Overworld, now lives under the unified
+     * dimensions/<namespace>/<path>/region/ layout (e.g.
+     * dimensions/minecraft/the_nether/region/). Writing into the old
+     * DIM-1/region/ path (what this method used to do) meant the game
+     * never even looked there and silently generated fresh terrain instead
+     * — no error, just empty-looking "clean" chunks, which is exactly the
+     * bug this fixes.
      */
     private static String regionFolderFor(Level level) {
-        var dimensionKey = level.dimension();
-        if (dimensionKey.equals(Level.OVERWORLD)) {
-            return "region";
-        } else if (dimensionKey.equals(Level.NETHER)) {
-            return "DIM-1/region";
-        } else if (dimensionKey.equals(Level.END)) {
-            return "DIM1/region";
-        } else {
-            var id = dimensionKey.identifier();
-            return "dimensions/" + id.getNamespace() + "/" + id.getPath() + "/region";
-        }
+        var id = level.dimension().identifier();
+        return "dimensions/" + id.getNamespace() + "/" + id.getPath() + "/region";
     }
 
     /**
