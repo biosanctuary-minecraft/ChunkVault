@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.zip.GZIPOutputStream;
 import java.io.DataOutputStream;
 import java.io.InputStream;
@@ -20,16 +21,19 @@ import java.io.DataInputStream;
  * Writes a minimal but hopefully-loadable level.dat.
  *
  * Honest caveat: the trickiest part of a from-scratch level.dat is
- * WorldGenSettings (dimension/biome-source/noise config) — get one field
- * wrong and singleplayer may refuse to open the world or silently ignore
- * our region files and regenerate terrain instead. To sidestep guessing
- * this entirely, we grab WorldGenSettings from any world that already
- * exists in the player's own saves/ folder (no manual copying needed —
- * every player has at least one world already, and the seed/settings
- * don't matter since we already have the real chunks). A manually placed
- * "template_level.dat" next to the target world still takes priority if
- * present. Only if neither exists do we fall back to a hand-built minimal
- * version, which is the option most likely to need a manual fix.
+ * WorldGenSettings (dimension/biome-source/noise config). As of 26.2 this
+ * isn't even stored inside level.dat anymore — it's a separate file at
+ * saves/<world>/data/minecraft/world_gen_settings.dat, and a level.dat
+ * without a matching one fails to load with "Overworld settings missing".
+ * To sidestep hand-building that file, we copy BOTH level.dat and the
+ * data/ folder from any world that already exists in the player's own
+ * saves/ directory (no manual copying needed — every player has at least
+ * one world already, and its seed/settings don't matter since we already
+ * have the real chunks). A manually placed "template_level.dat" (plus an
+ * optional sibling "template_data/" folder) next to the target world still
+ * takes priority if present. Only if neither exists do we fall back to a
+ * hand-built minimal version, which is the option most likely to need a
+ * manual fix.
  */
 public final class LevelDatWriter {
 
@@ -67,7 +71,12 @@ public final class LevelDatWriter {
         Path manual = worldDir.resolve("template_level.dat");
         if (Files.exists(manual)) {
             try {
-                return loadTemplate(manual);
+                CompoundTag tag = loadTemplate(manual);
+                Path manualData = worldDir.resolve("template_data");
+                if (Files.isDirectory(manualData)) {
+                    copyDataDir(manualData, worldDir.resolve("data"));
+                }
+                return tag;
             } catch (IOException e) {
                 System.err.println("[ChunkVault] template_level.dat unreadable, falling back: " + e);
             }
@@ -76,7 +85,7 @@ public final class LevelDatWriter {
         // 2) auto-discovered: any existing world in the player's own saves/
         if (gameDir != null) {
             Path savesDir = gameDir.resolve("saves");
-            CompoundTag fromSaves = findAnyLevelDatUnder(savesDir);
+            CompoundTag fromSaves = findAnyLevelDatUnder(savesDir, worldDir);
             if (fromSaves != null) {
                 return fromSaves;
             }
@@ -86,8 +95,8 @@ public final class LevelDatWriter {
         return buildFromScratch();
     }
 
-    /** Returns the parsed level.dat of the first (or most recently played) world found, or null. */
-    private static CompoundTag findAnyLevelDatUnder(Path savesDir) {
+    /** Returns the parsed level.dat of the most recently played world found, and copies its data/ folder alongside it. */
+    private static CompoundTag findAnyLevelDatUnder(Path savesDir, Path targetWorldDir) {
         if (!Files.isDirectory(savesDir)) {
             return null;
         }
@@ -107,10 +116,36 @@ public final class LevelDatWriter {
             if (candidate == null) {
                 return null;
             }
-            return loadTemplate(candidate);
+            CompoundTag tag = loadTemplate(candidate);
+            Path sourceData = candidate.getParent().resolve("data");
+            if (Files.isDirectory(sourceData)) {
+                copyDataDir(sourceData, targetWorldDir.resolve("data"));
+            }
+            return tag;
         } catch (IOException e) {
             System.err.println("[ChunkVault] could not scan saves/ for a level.dat template: " + e);
             return null;
+        }
+    }
+
+    /** Recursively copies a world's data/ folder (world_gen_settings.dat and friends). */
+    private static void copyDataDir(Path source, Path target) {
+        try (var stream = Files.walk(source)) {
+            stream.forEach(src -> {
+                try {
+                    Path dest = target.resolve(source.relativize(src));
+                    if (Files.isDirectory(src)) {
+                        Files.createDirectories(dest);
+                    } else {
+                        Files.createDirectories(dest.getParent());
+                        Files.copy(src, dest, StandardCopyOption.REPLACE_EXISTING);
+                    }
+                } catch (IOException e) {
+                    System.err.println("[ChunkVault] failed copying " + src + ": " + e);
+                }
+            });
+        } catch (IOException e) {
+            System.err.println("[ChunkVault] failed to copy data/ folder from " + source + ": " + e);
         }
     }
 
