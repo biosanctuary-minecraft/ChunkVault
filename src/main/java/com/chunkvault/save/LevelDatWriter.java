@@ -39,10 +39,10 @@ import java.io.DataInputStream;
 public final class LevelDatWriter {
 
     public static void write(Path worldDir, String levelName, BlockPos spawnPos) {
-        write(worldDir, null, levelName, spawnPos);
+        write(worldDir, null, levelName, spawnPos, null);
     }
 
-    public static void write(Path worldDir, Path gameDir, String levelName, BlockPos spawnPos) {
+    public static void write(Path worldDir, Path gameDir, String levelName, BlockPos spawnPos, CompoundTag playerTag) {
         try {
             CompoundTag root = loadBestAvailableTemplate(worldDir, gameDir);
 
@@ -59,6 +59,13 @@ public final class LevelDatWriter {
                 data.putInt("SpawnX", spawnPos.getX());
                 data.putInt("SpawnY", spawnPos.getY());
                 data.putInt("SpawnZ", spawnPos.getZ());
+            }
+            // Fallback player-position path: classic singleplayer worlds
+            // embed the player directly in level.dat instead of a separate
+            // playerdata file (PlayerDataWriter covers the other two
+            // candidate locations for 26.x).
+            if (playerTag != null) {
+                data.put("Player", playerTag);
             }
             data.putLong("LastPlayed", System.currentTimeMillis());
             root.put("Data", data);
