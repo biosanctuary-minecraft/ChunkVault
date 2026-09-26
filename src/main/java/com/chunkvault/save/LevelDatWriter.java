@@ -1,6 +1,7 @@
 package com.chunkvault.save;
 
 import net.minecraft.SharedConstants;
+import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtIo;
@@ -37,11 +38,11 @@ import java.io.DataInputStream;
  */
 public final class LevelDatWriter {
 
-    public static void write(Path worldDir, String levelName, int spawnX, int spawnY, int spawnZ) {
-        write(worldDir, null, levelName, spawnX, spawnY, spawnZ);
+    public static void write(Path worldDir, String levelName, BlockPos spawnPos) {
+        write(worldDir, null, levelName, spawnPos);
     }
 
-    public static void write(Path worldDir, Path gameDir, String levelName, int spawnX, int spawnY, int spawnZ) {
+    public static void write(Path worldDir, Path gameDir, String levelName, BlockPos spawnPos) {
         try {
             CompoundTag root = loadBestAvailableTemplate(worldDir, gameDir);
 
@@ -49,9 +50,16 @@ public final class LevelDatWriter {
             // of the tag directly (or an empty compound if missing).
             CompoundTag data = root.getCompound("Data").orElseGet(CompoundTag::new);
             data.putString("LevelName", levelName);
-            data.putInt("SpawnX", spawnX);
-            data.putInt("SpawnY", spawnY);
-            data.putInt("SpawnZ", spawnZ);
+            // spawnPos is null when the recorded position wasn't in the
+            // Overworld (level.dat's SpawnX/Y/Z is always an Overworld
+            // coordinate — writing Nether/End coordinates there just drops
+            // the player somewhere unrelated). In that case we keep
+            // whatever spawn the template world already had.
+            if (spawnPos != null) {
+                data.putInt("SpawnX", spawnPos.getX());
+                data.putInt("SpawnY", spawnPos.getY());
+                data.putInt("SpawnZ", spawnPos.getZ());
+            }
             data.putLong("LastPlayed", System.currentTimeMillis());
             root.put("Data", data);
 
