@@ -133,8 +133,13 @@ public final class WorldSaveManager {
      *                 terrain, which is exactly the bug this parameter
      *                 avoids). Pass null and the template's own spawn point
      *                 is kept instead.
+     * @param uuid the local player's UUID, used to name the playerdata file
+     *             so the game recognizes it as "the" singleplayer player.
+     * @param playerTag full player state (position/rotation/dimension) from
+     *                  PlayerDataWriter.buildPlayerTag(...), or null to skip
+     *                  writing player position entirely.
      */
-    public synchronized void closeAndFinish(BlockPos spawnPos) {
+    public synchronized void closeAndFinish(BlockPos spawnPos, java.util.UUID uuid, CompoundTag playerTag) {
         for (SimpleRegionFile region : openRegions.values()) {
             try {
                 region.close();
@@ -143,11 +148,14 @@ public final class WorldSaveManager {
             }
         }
         openRegions.clear();
-        LevelDatWriter.write(rootDir, gameDir, levelName, spawnPos);
+        if (playerTag != null && uuid != null) {
+            PlayerDataWriter.writeToWorld(rootDir, uuid, playerTag);
+        }
+        LevelDatWriter.write(rootDir, gameDir, levelName, spawnPos, playerTag);
     }
 
     // Overload used by RecordingState when no player position is available.
     public void closeAndFinish() {
-        closeAndFinish(null);
+        closeAndFinish(null, null, null);
     }
 }
