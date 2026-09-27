@@ -2,7 +2,7 @@ package com.chunkvault.gui;
 
 import com.chunkvault.state.RecordingState;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 
@@ -12,7 +12,7 @@ import net.minecraft.network.chat.Component;
  * session. Opened with /chunkvault map. Read-only — Esc closes it, nothing
  * here writes any game state.
  *
- * CHECK: GuiGraphics has been the drawing API since 1.20 and looked stable
+ * CHECK: GuiGraphicsExtractor has been the drawing API since 1.20 and looked stable
  * through every other check this mod hit, but fill()/drawCenteredString()
  * signatures are exactly the kind of thing that's shifted before in this
  * version — if this file doesn't compile, the fix is almost certainly a
@@ -32,7 +32,7 @@ public class MapScreen extends Screen {
     }
 
     @Override
-    public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+    public void render(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
         // Deliberately not calling the vanilla blurred-panorama background
         // helper here — its exact signature has moved around between
         // versions more than once, and a flat backdrop does the job fine.
