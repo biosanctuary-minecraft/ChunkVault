@@ -41,6 +41,17 @@ public class ChunkVaultClient implements ClientModInitializer {
         Path gameDir = FabricLoader.getInstance().getGameDir();
         boolean started = RecordingState.get().start(gameDir, name);
         if (started) {
+            var level = Minecraft.getInstance().level;
+            if (level != null) {
+                try {
+                    var worldGen = com.chunkvault.save.VoidWorldGenBuilder.build(level);
+                    com.chunkvault.save.VoidWorldGenBuilder.writeToWorld(
+                            RecordingState.get().saveManager().rootDir(), worldGen);
+                } catch (Exception e) {
+                    System.err.println("[ChunkVault] could not build void world-gen settings, " +
+                            "will fall back to copying from an existing world at stop time: " + e);
+                }
+            }
             int snapshotted = snapshotAlreadyLoadedChunks();
             source.sendFeedback(Component.literal(
                     "§a[ChunkVault] Запись начата: " + name +
