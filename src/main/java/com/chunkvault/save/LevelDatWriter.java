@@ -30,7 +30,11 @@ import java.io.DataInputStream;
  * data/ folder from any world that already exists in the player's own
  * saves/ directory (no manual copying needed — every player has at least
  * one world already, and its seed/settings don't matter since we already
- * have the real chunks). A manually placed "template_level.dat" (plus an
+ * have the real chunks). Better still: name that source world exactly
+ * "chunkvault-void-template" (see VOID_TEMPLATE_WORLD_NAME below) and
+ * create it as a Superflat "The Void" preset — then everywhere we haven't
+ * recorded a chunk stays empty air instead of generating normal terrain.
+ * A manually placed "template_level.dat" (plus an
  * optional sibling "template_data/" folder) next to the target world still
  * takes priority if present. Only if neither exists do we fall back to a
  * hand-built minimal version, which is the option most likely to need a
@@ -81,6 +85,16 @@ public final class LevelDatWriter {
         }
     }
 
+    /**
+     * A world with exactly this name (created once by the user via
+     * Singleplayer → Create New World → World Type → Superflat →
+     * Presets → "The Void") is preferred as the template, because a real
+     * Void-preset world generates nothing at all outside our recorded
+     * chunks — exactly the "empty unless a seed is set" behavior asked
+     * for — with zero guessing about the world_gen_settings.dat schema.
+     */
+    public static final String VOID_TEMPLATE_WORLD_NAME = "chunkvault-void-template";
+
     private static CompoundTag loadBestAvailableTemplate(Path worldDir, Path gameDir) throws IOException {
         // 1) explicit manual override, if the user placed one
         Path manual = worldDir.resolve("template_level.dat");
@@ -97,16 +111,37 @@ public final class LevelDatWriter {
             }
         }
 
-        // 2) auto-discovered: any existing world in the player's own saves/
         if (gameDir != null) {
             Path savesDir = gameDir.resolve("saves");
+
+            // 2) the void-preset world, if the user made one (see the
+            // constant's doc above) — this is what makes unexplored areas
+            // stay empty instead of generating normal terrain.
+            Path voidWorld = savesDir.resolve(VOID_TEMPLATE_WORLD_NAME);
+            Path voidLevelDat = voidWorld.resolve("level.dat");
+            if (Files.isRegularFile(voidLevelDat)) {
+                try {
+                    CompoundTag tag = loadTemplate(voidLevelDat);
+                    Path sourceData = voidWorld.resolve("data");
+                    if (Files.isDirectory(sourceData)) {
+                        copyDataDir(sourceData, worldDir.resolve("data"));
+                    }
+                    return tag;
+                } catch (IOException e) {
+                    System.err.println("[ChunkVault] void template world unreadable, falling back: " + e);
+                }
+            }
+
+            // 3) auto-discovered: any existing world in the player's own saves/
+            // (fills in normal terrain outside recorded areas — better than
+            // nothing, but not what "empty unless I set a seed" asks for)
             CompoundTag fromSaves = findAnyLevelDatUnder(savesDir, worldDir);
             if (fromSaves != null) {
                 return fromSaves;
             }
         }
 
-        // 3) last resort: hand-built, riskiest option (see class doc)
+        // 4) last resort: hand-built, riskiest option (see class doc)
         return buildFromScratch();
     }
 
