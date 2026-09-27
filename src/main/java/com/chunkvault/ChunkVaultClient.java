@@ -27,8 +27,14 @@ public class ChunkVaultClient implements ClientModInitializer {
                                         .executes(ctx -> start(ctx.getSource(), StringArgumentType.getString(ctx, "name")))))
                         .then(literal("stop").executes(ctx -> stop(ctx.getSource())))
                         .then(literal("status").executes(ctx -> status(ctx.getSource())))
+                        .then(literal("map").executes(ctx -> map(ctx.getSource())))
                 )
         );
+    }
+
+    private int map(FabricClientCommandSource source) {
+        Minecraft.getInstance().setScreen(new com.chunkvault.gui.MapScreen());
+        return 1;
     }
 
     private int start(FabricClientCommandSource source, String name) {
