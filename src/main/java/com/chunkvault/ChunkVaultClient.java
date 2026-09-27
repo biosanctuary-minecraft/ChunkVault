@@ -35,15 +35,55 @@ public class ChunkVaultClient implements ClientModInitializer {
         Path gameDir = FabricLoader.getInstance().getGameDir();
         boolean started = RecordingState.get().start(gameDir, name);
         if (started) {
+            int snapshotted = snapshotAlreadyLoadedChunks();
             source.sendFeedback(Component.literal(
                     "§a[ChunkVault] Запись начата: " + name +
-                    " — ходите по миру и открывайте сундуки, всё будет сохраняться."));
+                    " — ходите по миру и открывайте сундуки, всё будет сохраняться. " +
+                    "(сразу захвачено " + snapshotted + " уже прогруженных чанков вокруг тебя)"));
         } else {
             source.sendFeedback(Component.literal(
                     "§c[ChunkVault] Запись уже идёт (" + RecordingState.get().sessionName() +
                     "). Сначала выполните /chunkvault stop."));
         }
         return 1;
+    }
+
+    /**
+     * Fix for the "donut hole" bug: the chunk-packet mixin only ever sees
+     * chunks that arrive AFTER recording starts. Any chunk the client
+     * already had loaded before /chunkvault start (which, in practice, is
+     * everywhere immediately around the player — they were already
+     * standing there) never triggers a new packet and so was silently
+     * never captured, leaving exactly the area the player cares about
+     * empty. This walks every chunk position the client currently has
+     * loaded within render distance and saves it immediately, on top of
+     * whatever new packets arrive from here on.
+     */
+    private int snapshotAlreadyLoadedChunks() {
+        var level = Minecraft.getInstance().level;
+        var player = Minecraft.getInstance().player;
+        var manager = RecordingState.get().saveManager();
+        if (level == null || player == null || manager == null) {
+            return 0;
+        }
+        int centerX = player.blockPosition().getX() >> 4;
+        int centerZ = player.blockPosition().getZ() >> 4;
+        int radius = Minecraft.getInstance().options.renderDistance().get() + 2;
+        int count = 0;
+        for (int dx = -radius; dx <= radius; dx++) {
+            for (int dz = -radius; dz <= radius; dz++) {
+                int cx = centerX + dx;
+                int cz = centerZ + dz;
+                if (level.hasChunk(cx, cz)) {
+                    var chunk = level.getChunk(cx, cz);
+                    if (chunk instanceof net.minecraft.world.level.chunk.LevelChunk levelChunk) {
+                        manager.saveChunk(level, levelChunk);
+                        count++;
+                    }
+                }
+            }
+        }
+        return count;
     }
 
     private int stop(FabricClientCommandSource source) {
