@@ -33,7 +33,7 @@ public class ChunkVaultClient implements ClientModInitializer {
     }
 
     private int map(FabricClientCommandSource source) {
-        Minecraft.getInstance().setScreen(new com.chunkvault.gui.MapScreen());
+        Minecraft.getInstance().setScreenAndShow(new com.chunkvault.gui.MapScreen());
         return 1;
     }
 
