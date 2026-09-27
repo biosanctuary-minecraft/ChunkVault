@@ -86,23 +86,30 @@ public final class LevelDatWriter {
     }
 
     /**
-     * A world with exactly this name (created once by the user via
-     * Singleplayer → Create New World → World Type → Superflat →
-     * Presets → "The Void") is preferred as the template, because a real
-     * Void-preset world generates nothing at all outside our recorded
-     * chunks — exactly the "empty unless a seed is set" behavior asked
-     * for — with zero guessing about the world_gen_settings.dat schema.
+     * A world with exactly this name is used ONLY as a last-resort fallback
+     * now — VoidWorldGenBuilder builds a real void world_gen_settings.dat in
+     * code at /chunkvault start, so this manual step normally isn't needed
+     * at all. Kept as an escape hatch in case that in-code builder ever
+     * throws (see its class doc for why that's plausible on a version this
+     * new).
      */
     public static final String VOID_TEMPLATE_WORLD_NAME = "chunkvault-void-template";
 
+    /** True once VoidWorldGenBuilder has already written its own file — don't let template copying clobber it. */
+    private static boolean alreadyHasOwnWorldGenSettings(Path worldDir) {
+        return Files.isRegularFile(worldDir.resolve("data").resolve("minecraft").resolve("world_gen_settings.dat"));
+    }
+
     private static CompoundTag loadBestAvailableTemplate(Path worldDir, Path gameDir) throws IOException {
+        boolean skipDataCopy = alreadyHasOwnWorldGenSettings(worldDir);
+
         // 1) explicit manual override, if the user placed one
         Path manual = worldDir.resolve("template_level.dat");
         if (Files.exists(manual)) {
             try {
                 CompoundTag tag = loadTemplate(manual);
                 Path manualData = worldDir.resolve("template_data");
-                if (Files.isDirectory(manualData)) {
+                if (!skipDataCopy && Files.isDirectory(manualData)) {
                     copyDataDir(manualData, worldDir.resolve("data"));
                 }
                 return tag;
@@ -114,28 +121,30 @@ public final class LevelDatWriter {
         if (gameDir != null) {
             Path savesDir = gameDir.resolve("saves");
 
-            // 2) the void-preset world, if the user made one (see the
-            // constant's doc above) — this is what makes unexplored areas
-            // stay empty instead of generating normal terrain.
-            Path voidWorld = savesDir.resolve(VOID_TEMPLATE_WORLD_NAME);
-            Path voidLevelDat = voidWorld.resolve("level.dat");
-            if (Files.isRegularFile(voidLevelDat)) {
-                try {
-                    CompoundTag tag = loadTemplate(voidLevelDat);
-                    Path sourceData = voidWorld.resolve("data");
-                    if (Files.isDirectory(sourceData)) {
-                        copyDataDir(sourceData, worldDir.resolve("data"));
+            // 2) legacy manual void-preset world, only relevant as a
+            // fallback if VoidWorldGenBuilder didn't already succeed.
+            if (!skipDataCopy) {
+                Path voidWorld = savesDir.resolve(VOID_TEMPLATE_WORLD_NAME);
+                Path voidLevelDat = voidWorld.resolve("level.dat");
+                if (Files.isRegularFile(voidLevelDat)) {
+                    try {
+                        CompoundTag tag = loadTemplate(voidLevelDat);
+                        Path sourceData = voidWorld.resolve("data");
+                        if (Files.isDirectory(sourceData)) {
+                            copyDataDir(sourceData, worldDir.resolve("data"));
+                        }
+                        return tag;
+                    } catch (IOException e) {
+                        System.err.println("[ChunkVault] void template world unreadable, falling back: " + e);
                     }
-                    return tag;
-                } catch (IOException e) {
-                    System.err.println("[ChunkVault] void template world unreadable, falling back: " + e);
                 }
             }
 
-            // 3) auto-discovered: any existing world in the player's own saves/
-            // (fills in normal terrain outside recorded areas — better than
-            // nothing, but not what "empty unless I set a seed" asks for)
-            CompoundTag fromSaves = findAnyLevelDatUnder(savesDir, worldDir);
+            // 3) auto-discovered: any existing world in the player's own saves/.
+            // Only copies its data/ folder if we don't already have our own
+            // (fills in normal terrain outside recorded areas as a last
+            // resort — better than a crash, but not "empty unless I set a seed").
+            CompoundTag fromSaves = findAnyLevelDatUnder(savesDir, worldDir, skipDataCopy);
             if (fromSaves != null) {
                 return fromSaves;
             }
@@ -145,8 +154,8 @@ public final class LevelDatWriter {
         return buildFromScratch();
     }
 
-    /** Returns the parsed level.dat of the most recently played world found, and copies its data/ folder alongside it. */
-    private static CompoundTag findAnyLevelDatUnder(Path savesDir, Path targetWorldDir) {
+    /** Returns the parsed level.dat of the most recently played world found, and copies its data/ folder alongside it unless skipDataCopy is true. */
+    private static CompoundTag findAnyLevelDatUnder(Path savesDir, Path targetWorldDir, boolean skipDataCopy) {
         if (!Files.isDirectory(savesDir)) {
             return null;
         }
@@ -167,9 +176,11 @@ public final class LevelDatWriter {
                 return null;
             }
             CompoundTag tag = loadTemplate(candidate);
-            Path sourceData = candidate.getParent().resolve("data");
-            if (Files.isDirectory(sourceData)) {
-                copyDataDir(sourceData, targetWorldDir.resolve("data"));
+            if (!skipDataCopy) {
+                Path sourceData = candidate.getParent().resolve("data");
+                if (Files.isDirectory(sourceData)) {
+                    copyDataDir(sourceData, targetWorldDir.resolve("data"));
+                }
             }
             return tag;
         } catch (IOException e) {
