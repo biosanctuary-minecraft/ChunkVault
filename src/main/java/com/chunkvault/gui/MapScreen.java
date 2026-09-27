@@ -15,7 +15,8 @@ import net.minecraft.network.chat.Component;
  * CHECK: this version's Screen rendering was reworked into a two-phase
  * extraction model — Screen.render(GuiGraphics) became
  * Screen.extractRenderState(GuiGraphicsExtractor), and
- * drawCenteredString(...) became centeredText(..., hasShadow). fill()
+ * drawCenteredString(...) became centeredText(...) (same 5 args, no
+ * hasShadow param, unlike text()). fill()
  * itself is unchanged. If this file doesn't compile, check for exactly
  * these renames first.
  */
@@ -45,7 +46,7 @@ public class MapScreen extends Screen {
         var manager = RecordingState.get().saveManager();
 
         if (player == null || level == null) {
-            graphics.centeredText(this.font, "Нет активного мира.", this.width / 2, this.height / 2, 0xFFFFFF, true);
+            graphics.centeredText(this.font, "Нет активного мира.", this.width / 2, this.height / 2, 0xFFFFFF);
             super.extractRenderState(graphics, mouseX, mouseY, partialTick);
             return;
         }
@@ -88,16 +89,16 @@ public class MapScreen extends Screen {
         graphics.fill(startX - 1, startY - 1, startX, startY + gridPixelH + 1, COLOR_BORDER);
         graphics.fill(startX + gridPixelW, startY - 1, startX + gridPixelW + 1, startY + gridPixelH + 1, COLOR_BORDER);
 
-        graphics.centeredText(this.font, this.title.getString(), this.width / 2, 12, 0xFFFFFF, true);
+        graphics.centeredText(this.font, this.title.getString(), this.width / 2, 12, 0xFFFFFF);
 
         String status = manager != null
                 ? "Всего записано: " + manager.chunksSaved() + " | в кадре: " + recordedCount + " из " + ((radiusX * 2 + 1) * (radiusZ * 2 + 1))
                 : "Запись не активна — показаны только уже сохранённые чанки, если они попадают в кадр";
-        graphics.centeredText(this.font, status, this.width / 2, startY - 16, 0xCCCCCC, true);
+        graphics.centeredText(this.font, status, this.width / 2, startY - 16, 0xCCCCCC);
 
         graphics.centeredText(this.font,
                 "Измерение: " + dimensionId + "   Esc — закрыть",
-                this.width / 2, startY + gridPixelH + 12, 0xAAAAAA, true);
+                this.width / 2, startY + gridPixelH + 12, 0xAAAAAA);
 
         super.extractRenderState(graphics, mouseX, mouseY, partialTick);
     }
