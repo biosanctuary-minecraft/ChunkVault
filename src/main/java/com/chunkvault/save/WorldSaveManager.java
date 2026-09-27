@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class WorldSaveManager {
@@ -21,6 +22,11 @@ public final class WorldSaveManager {
     private final Path gameDir;
     private final String levelName;
     private final Map<String, SimpleRegionFile> openRegions = new ConcurrentHashMap<>();
+
+    // Which chunks we've recorded, keyed "dimensionId:chunkX,chunkZ" — used
+    // by the in-game map screen to show what's already saved around the
+    // player. Not persisted; only matters for the current session's UI.
+    private final Set<String> recordedChunks = ConcurrentHashMap.newKeySet();
 
     // Track how many chunks/chests we've captured, for /chunkvault status.
     private volatile int chunksSaved = 0;
@@ -118,10 +124,16 @@ public final class WorldSaveManager {
             int localX = Math.floorMod(chunkX, 32);
             int localZ = Math.floorMod(chunkZ, 32);
             region.writeChunk(localX, localZ, bytes.toByteArray());
+            recordedChunks.add(level.dimension().identifier() + ":" + chunkX + "," + chunkZ);
             chunksSaved++;
         } catch (Exception e) {
             System.err.println("[ChunkVault] failed to save chunk " + chunk.getPos() + ": " + e);
         }
+    }
+
+    /** Used by the map screen to show which nearby chunks are already recorded. */
+    public boolean isRecorded(String dimensionId, int chunkX, int chunkZ) {
+        return recordedChunks.contains(dimensionId + ":" + chunkX + "," + chunkZ);
     }
 
     /**
