@@ -17,8 +17,8 @@ import net.minecraft.world.level.dimension.BuiltinDimensionTypes;
 import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.level.dimension.LevelStem;
 import net.minecraft.world.level.levelgen.WorldDimensions;
+import net.minecraft.world.level.levelgen.FlatLevelSource;
 import net.minecraft.world.level.levelgen.flat.FlatLevelGeneratorSettings;
-import net.minecraft.world.level.levelgen.flat.FlatLevelSource;
 
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -74,7 +74,9 @@ public final class VoidWorldGenBuilder {
         // Using result()/orElseThrow rather than DataResult.getOrThrow(...):
         // the latter's signature has changed across DFU versions, result()
         // returning Optional has not.
-        DataResult<Tag> encoded = WorldDimensions.CODEC.encodeStart(ops, dimensions);
+        // Fixed: WorldDimensions.CODEC is a MapCodec<WorldDimensions>, not a
+        // full Codec — .codec() converts it before encodeStart() is usable.
+        DataResult<Tag> encoded = WorldDimensions.CODEC.codec().encodeStart(ops, dimensions);
         Tag tag = encoded.result().orElseThrow(() ->
                 new IllegalStateException("failed to encode void WorldDimensions: " + encoded.error()));
 
