@@ -23,9 +23,6 @@ public abstract class ChunkCaptureMixin {
 
     @Inject(method = "handleLevelChunkWithLight", at = @At("RETURN"))
     private void chunkvault$onChunkLoaded(ClientboundLevelChunkWithLightPacket packet, CallbackInfo ci) {
-        if (!RecordingState.get().isActive()) {
-            return;
-        }
         Minecraft client = Minecraft.getInstance();
         ClientLevel level = client.level;
         if (level == null) {
@@ -33,7 +30,15 @@ public abstract class ChunkCaptureMixin {
         }
         var chunk = level.getChunk(packet.getX(), packet.getZ());
         if (chunk instanceof LevelChunk levelChunk) {
-            RecordingState.get().saveManager().saveChunk(level, levelChunk);
+            // The map remembers every chunk the client sees, recording or not.
+            com.chunkvault.gui.MapCache.update(level, levelChunk);
+
+            if (RecordingState.get().isActive()) {
+                var manager = RecordingState.get().saveManager();
+                if (manager != null) {
+                    manager.saveChunk(level, levelChunk);
+                }
+            }
         }
     }
 }
