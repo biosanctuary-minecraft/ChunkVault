@@ -25,6 +25,15 @@ public class ChunkVaultClient implements ClientModInitializer {
                 openMapNextTick = false;
                 Minecraft.getInstance().setScreenAndShow(new com.chunkvault.gui.MapScreen());
             }
+
+            // While recording, sample entities (mobs, dropped items, frames...) every 2 seconds.
+            if (++tickCounter % 40 == 0 && RecordingState.get().isActive()) {
+                var manager = RecordingState.get().saveManager();
+                var level = Minecraft.getInstance().level;
+                if (manager != null && level != null) {
+                    manager.snapshotEntities(level);
+                }
+            }
         });
 
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
@@ -88,6 +97,7 @@ public class ChunkVaultClient implements ClientModInitializer {
     // "flashed and vanished"). So the command only raises this flag, and the
     // screen is opened from the next client tick, once chat is already gone.
     private static volatile boolean openMapNextTick = false;
+    private static int tickCounter = 0;
 
     private int map(FabricClientCommandSource source) {
         openMapNextTick = true;
@@ -166,11 +176,14 @@ public class ChunkVaultClient implements ClientModInitializer {
             return 0;
         }
         var manager = RecordingState.get().saveManager();
-        int chunks = manager.chunksSaved();
-        int chests = manager.chestsSeen();
-
         var player = Minecraft.getInstance().player;
         var level = Minecraft.getInstance().level;
+        if (level != null) {
+            manager.snapshotEntities(level); // last look at the entities before writing them out
+        }
+        int chunks = manager.chunksSaved();
+        int chests = manager.chestsSeen();
+        int entities = manager.entitiesSeen();
 
         java.util.UUID uuid = null;
         net.minecraft.nbt.CompoundTag playerTag = null;
@@ -191,7 +204,8 @@ public class ChunkVaultClient implements ClientModInitializer {
 
         Path dir = RecordingState.get().stop(spawnPos, uuid, playerTag);
         source.sendFeedback(Component.literal(
-                "§a[ChunkVault] Готово: " + chunks + " чанков, " + chests + " контейнеров. Сохранено в: " + dir));
+                "§a[ChunkVault] Готово: " + chunks + " чанков, " + chests + " контейнеров, "
+                + entities + " сущностей. Сохранено в: " + dir));
         source.sendFeedback(Component.literal(
                 "§b[ChunkVault] При заходе в этот мир ты должен оказаться там же, где остановил запись."));
         return 1;
@@ -205,7 +219,8 @@ public class ChunkVaultClient implements ClientModInitializer {
         var manager = RecordingState.get().saveManager();
         source.sendFeedback(Component.literal(
                 "§b[ChunkVault] Идёт запись \"" + RecordingState.get().sessionName() + "\": " +
-                manager.chunksSaved() + " чанков, " + manager.chestsSeen() + " контейнеров."));
+                manager.chunksSaved() + " чанков, " + manager.chestsSeen() + " контейнеров, "
+                + manager.entitiesSeen() + " сущностей."));
         return 1;
     }
 }
