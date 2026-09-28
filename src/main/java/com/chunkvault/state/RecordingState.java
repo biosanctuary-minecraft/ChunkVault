@@ -20,6 +20,7 @@ public final class RecordingState {
     private final AtomicBoolean active = new AtomicBoolean(false);
     private volatile WorldSaveManager saveManager;
     private volatile String sessionName;
+    private volatile String lastSessionName;
 
     private RecordingState() {}
 
@@ -33,6 +34,11 @@ public final class RecordingState {
 
     public String sessionName() {
         return sessionName;
+    }
+
+    /** Name of the most recent recording, kept after /chunkvault stop so the map can still show it. */
+    public String lastSessionName() {
+        return lastSessionName;
     }
 
     public WorldSaveManager saveManager() {
@@ -50,6 +56,7 @@ public final class RecordingState {
         this.saveManager = new WorldSaveManager(target, gameDir, name);
         this.saveManager.init();
         this.sessionName = name;
+        this.lastSessionName = name;
         active.set(true);
         return true;
     }
