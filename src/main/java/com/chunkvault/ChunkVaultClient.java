@@ -20,6 +20,13 @@ public class ChunkVaultClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            if (openMapNextTick) {
+                openMapNextTick = false;
+                Minecraft.getInstance().setScreenAndShow(new com.chunkvault.gui.MapScreen());
+            }
+        });
+
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
                 dispatcher.register(literal("chunkvault")
                         .then(literal("start")
@@ -75,8 +82,15 @@ public class ChunkVaultClient implements ClientModInitializer {
         return 1;
     }
 
+    // The command runs from inside ChatScreen's key handler, and ChatScreen
+    // calls setScreen(null) on itself right AFTER the command returns — which
+    // instantly closed any screen we opened from the command (the map
+    // "flashed and vanished"). So the command only raises this flag, and the
+    // screen is opened from the next client tick, once chat is already gone.
+    private static volatile boolean openMapNextTick = false;
+
     private int map(FabricClientCommandSource source) {
-        Minecraft.getInstance().setScreenAndShow(new com.chunkvault.gui.MapScreen());
+        openMapNextTick = true;
         return 1;
     }
 
