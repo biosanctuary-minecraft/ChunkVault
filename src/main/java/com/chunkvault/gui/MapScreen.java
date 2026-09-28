@@ -5,106 +5,246 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.level.chunk.LevelChunk;
 
 /**
- * A ChunkBase/WorldDownloader-style overview: a grid of squares around the
- * player, colored by whether that chunk has already been recorded this
- * session. Opened with /chunkvault map. Read-only — Esc closes it, nothing
- * here writes any game state.
+ * Top-down world map in the spirit of WorldDownloader / Xaero's map:
+ *  - shows real block colours of everything the client has loaded this session
+ *    (works with or without a recording running);
+ *  - drag with the left mouse button to pan, mouse wheel to zoom towards the
+ *    cursor, right mouse button to jump back to the player;
+ *  - chunks that are already saved by /chunkvault are tinted green;
+ *  - shows player coordinates and the block / chunk under the cursor.
  *
- * CHECK: this version's Screen rendering was reworked into a two-phase
- * extraction model — Screen.render(GuiGraphics) became
- * Screen.extractRenderState(GuiGraphicsExtractor), and
- * drawCenteredString(...) became centeredText(...) (same 5 args, no
- * hasShadow param, unlike text()). fill()
- * itself is unchanged. If this file doesn't compile, check for exactly
- * these renames first.
+ * NOTE: colours passed to the drawing calls must carry an alpha byte
+ * (0xFFRRGGBB). In this version 0xRRGGBB with alpha 0 is fully transparent —
+ * that is why the very first version of this screen showed no text at all.
  */
 public class MapScreen extends Screen {
 
-    private static final int CELL_SIZE = 6;
-    private static final int COLOR_RECORDED = 0xFF3DDC3D;
-    private static final int COLOR_UNRECORDED = 0xFF3A3A3A;
-    private static final int COLOR_PLAYER = 0xFFFF5050;
-    private static final int COLOR_BORDER = 0xFF808080;
-    private static final int COLOR_BACKDROP = 0xE0101010;
+    private static final int TOP_BAR = 22;
+    private static final int BOTTOM_BAR = 34;
+    private static final double MIN_SCALE = 0.125; // pixels per block
+    private static final double MAX_SCALE = 16.0;
+
+    private static double lastScale = 1.0;
+
+    private double centerX;
+    private double centerZ;
+    private double scale = lastScale;
+
+    private boolean wasLeftDown;
+    private int lastMouseX;
+    private int lastMouseY;
+    private int refreshCursor;
 
     public MapScreen() {
-        super(Component.literal("ChunkVault — карта прогруженного"));
+        super(Component.literal("ChunkVault — карта"));
+        var player = Minecraft.getInstance().player;
+        if (player != null) {
+            centerX = player.getX();
+            centerZ = player.getZ();
+        }
     }
 
     @Override
-    public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
-        // Deliberately not calling the vanilla blurred-panorama background
-        // helper here — its exact signature has moved around between
-        // versions more than once, and a flat backdrop does the job fine.
-        graphics.fill(0, 0, this.width, this.height, COLOR_BACKDROP);
+    public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
+        super.extractRenderState(g, mouseX, mouseY, partialTick);
 
         Minecraft mc = Minecraft.getInstance();
         var player = mc.player;
         var level = mc.level;
-        var manager = RecordingState.get().saveManager();
+
+        g.fill(0, 0, this.width, this.height, 0xFF0B0B0F);
 
         if (player == null || level == null) {
-            graphics.centeredText(this.font, "Нет активного мира.", this.width / 2, this.height / 2, 0xFFFFFF);
-            super.extractRenderState(graphics, mouseX, mouseY, partialTick);
+            g.centeredText(this.font, "Нет активного мира.", this.width / 2, this.height / 2, 0xFFFFFFFF);
             return;
         }
 
-        int playerChunkX = player.blockPosition().getX() >> 4;
-        int playerChunkZ = player.blockPosition().getZ() >> 4;
+        final int mapX0 = 0;
+        final int mapY0 = TOP_BAR;
+        final int mapX1 = this.width;
+        final int mapY1 = this.height - BOTTOM_BAR;
+        final int mapW = mapX1 - mapX0;
+        final int mapH = mapY1 - mapY0;
+        final double mapCX = mapX0 + mapW / 2.0;
+        final double mapCY = mapY0 + mapH / 2.0;
 
-        int radiusX = Math.max(4, (this.width - 60) / (2 * CELL_SIZE));
-        int radiusZ = Math.max(4, (this.height - 100) / (2 * CELL_SIZE));
-
-        int gridPixelW = (radiusX * 2 + 1) * CELL_SIZE;
-        int gridPixelH = (radiusZ * 2 + 1) * CELL_SIZE;
-        int startX = (this.width - gridPixelW) / 2;
-        int startY = (this.height - gridPixelH) / 2;
+        // ---- input: drag to pan, right button = back to the player ----
+        var mouse = mc.mouseHandler;
+        boolean leftDown = mouse.isLeftPressed();
+        boolean inMap = mouseY >= mapY0 && mouseY < mapY1;
+        if (leftDown && wasLeftDown && inMap) {
+            centerX -= (mouseX - lastMouseX) / scale;
+            centerZ -= (mouseY - lastMouseY) / scale;
+        }
+        wasLeftDown = leftDown;
+        lastMouseX = mouseX;
+        lastMouseY = mouseY;
+        if (mouse.isRightPressed()) {
+            centerX = player.getX();
+            centerZ = player.getZ();
+        }
 
         String dimensionId = level.dimension().identifier().toString();
+        var cache = MapCache.forDimension(dimensionId);
+        refreshLoadedChunks(mc, level, player, cache);
 
-        int recordedCount = 0;
-        for (int dz = -radiusZ; dz <= radiusZ; dz++) {
-            for (int dx = -radiusX; dx <= radiusX; dx++) {
-                int cx = playerChunkX + dx;
-                int cz = playerChunkZ + dz;
-                boolean recorded = manager != null && manager.isRecorded(dimensionId, cx, cz);
-                if (recorded) {
-                    recordedCount++;
+        // ---- draw the chunks ----
+        double ppc = scale * 16.0; // pixels per chunk
+        int detail = ppc >= 192 ? 16 : ppc >= 96 ? 8 : ppc >= 48 ? 4 : ppc >= 24 ? 2 : 1;
+        var manager = RecordingState.get().saveManager();
+        int chunksInView = 0;
+        int recordedInView = 0;
+
+        for (var entry : cache.entrySet()) {
+            long key = entry.getKey();
+            int cx = MapCache.keyX(key);
+            int cz = MapCache.keyZ(key);
+            double sx = mapCX + (cx * 16.0 - centerX) * scale;
+            double sy = mapCY + (cz * 16.0 - centerZ) * scale;
+            if (sx + ppc < mapX0 || sx > mapX1 || sy + ppc < mapY0 || sy > mapY1) {
+                continue;
+            }
+            chunksInView++;
+            MapCache.ChunkColors colors = entry.getValue();
+
+            if (detail == 1) {
+                if (colors.avg != 0) {
+                    fillClipped(g, sx, sy, sx + ppc, sy + ppc, colors.avg, mapX0, mapY0, mapX1, mapY1);
                 }
-                int px = startX + (dx + radiusX) * CELL_SIZE;
-                int py = startY + (dz + radiusZ) * CELL_SIZE;
-                int color = recorded ? COLOR_RECORDED : COLOR_UNRECORDED;
-                graphics.fill(px, py, px + CELL_SIZE - 1, py + CELL_SIZE - 1, color);
+            } else {
+                int cell = 16 / detail;
+                double cellSize = ppc / detail;
+                for (int cz2 = 0; cz2 < detail; cz2++) {
+                    for (int cx2 = 0; cx2 < detail; cx2++) {
+                        int color = colors.px[(cz2 * cell + cell / 2) * 16 + (cx2 * cell + cell / 2)];
+                        if (color != 0) {
+                            fillClipped(g, sx + cx2 * cellSize, sy + cz2 * cellSize,
+                                    sx + (cx2 + 1) * cellSize, sy + (cz2 + 1) * cellSize,
+                                    color, mapX0, mapY0, mapX1, mapY1);
+                        }
+                    }
+                }
+            }
+
+            if (manager != null && manager.isRecorded(dimensionId, cx, cz)) {
+                recordedInView++;
+                fillClipped(g, sx, sy, sx + ppc, sy + ppc, 0x3300FF66, mapX0, mapY0, mapX1, mapY1);
             }
         }
 
-        int centerPx = startX + radiusX * CELL_SIZE;
-        int centerPy = startY + radiusZ * CELL_SIZE;
-        graphics.fill(centerPx, centerPy, centerPx + CELL_SIZE - 1, centerPy + CELL_SIZE - 1, COLOR_PLAYER);
+        // ---- chunk grid when zoomed in enough ----
+        if (ppc >= 48) {
+            double halfW = (mapW / 2.0) / scale;
+            double halfH = (mapH / 2.0) / scale;
+            int firstCx = (int) Math.floor((centerX - halfW) / 16.0);
+            int lastCx = (int) Math.ceil((centerX + halfW) / 16.0);
+            int firstCz = (int) Math.floor((centerZ - halfH) / 16.0);
+            int lastCz = (int) Math.ceil((centerZ + halfH) / 16.0);
+            for (int cx = firstCx; cx <= lastCx; cx++) {
+                double sx = mapCX + (cx * 16.0 - centerX) * scale;
+                fillClipped(g, sx, mapY0, sx + 1, mapY1, 0x30FFFFFF, mapX0, mapY0, mapX1, mapY1);
+            }
+            for (int cz = firstCz; cz <= lastCz; cz++) {
+                double sy = mapCY + (cz * 16.0 - centerZ) * scale;
+                fillClipped(g, mapX0, sy, mapX1, sy + 1, 0x30FFFFFF, mapX0, mapY0, mapX1, mapY1);
+            }
+        }
 
-        graphics.fill(startX - 1, startY - 1, startX + gridPixelW + 1, startY, COLOR_BORDER);
-        graphics.fill(startX - 1, startY + gridPixelH, startX + gridPixelW + 1, startY + gridPixelH + 1, COLOR_BORDER);
-        graphics.fill(startX - 1, startY - 1, startX, startY + gridPixelH + 1, COLOR_BORDER);
-        graphics.fill(startX + gridPixelW, startY - 1, startX + gridPixelW + 1, startY + gridPixelH + 1, COLOR_BORDER);
+        // ---- player marker ----
+        double playerSX = mapCX + (player.getX() - centerX) * scale;
+        double playerSY = mapCY + (player.getZ() - centerZ) * scale;
+        fillClipped(g, playerSX - 3, playerSY - 3, playerSX + 3, playerSY + 3, 0xFFFFFFFF, mapX0, mapY0, mapX1, mapY1);
+        fillClipped(g, playerSX - 2, playerSY - 2, playerSX + 2, playerSY + 2, 0xFFFF3030, mapX0, mapY0, mapX1, mapY1);
 
-        graphics.centeredText(this.font, this.title.getString(), this.width / 2, 12, 0xFFFFFF);
+        // ---- bars with text ----
+        g.fill(0, 0, this.width, TOP_BAR, 0xFF1A1A22);
+        g.fill(0, this.height - BOTTOM_BAR, this.width, this.height, 0xFF1A1A22);
 
-        String status = manager != null
-                ? "Всего записано: " + manager.chunksSaved() + " | в кадре: " + recordedCount + " из " + ((radiusX * 2 + 1) * (radiusZ * 2 + 1))
-                : "Запись не активна — показаны только уже сохранённые чанки, если они попадают в кадр";
-        graphics.centeredText(this.font, status, this.width / 2, startY - 16, 0xCCCCCC);
+        g.text(this.font, "ChunkVault — карта", 8, 7, 0xFFFFFFFF, true);
+        String recState = manager != null
+                ? "● ИДЁТ ЗАПИСЬ: " + manager.chunksSaved() + " чанков"
+                : "запись не идёт — просмотр";
+        g.text(this.font, recState, 140, 7, manager != null ? 0xFFFF6060 : 0xFFAAAAAA, true);
+        String dimText = "Измерение: " + dimensionId;
+        g.text(this.font, dimText, this.width - this.font.width(dimText) - 8, 7, 0xFFCCCCCC, true);
 
-        graphics.centeredText(this.font,
-                "Измерение: " + dimensionId + "   Esc — закрыть",
-                this.width / 2, startY + gridPixelH + 12, 0xAAAAAA);
+        String cursorText = "";
+        if (inMap) {
+            int bx = (int) Math.floor(centerX + (mouseX - mapCX) / scale);
+            int bz = (int) Math.floor(centerZ + (mouseY - mapCY) / scale);
+            cursorText = "Курсор: X " + bx + "  Z " + bz + "   чанк " + (bx >> 4) + ", " + (bz >> 4);
+            if (manager != null && manager.isRecorded(dimensionId, bx >> 4, bz >> 4)) {
+                cursorText += "   [записан]";
+            }
+        }
+        String playerText = "Ты: X " + (int) Math.floor(player.getX())
+                + "  Y " + (int) Math.floor(player.getY())
+                + "  Z " + (int) Math.floor(player.getZ());
+        int bottomY = this.height - BOTTOM_BAR;
+        g.text(this.font, playerText, 8, bottomY + 5, 0xFFFF9090, true);
+        g.text(this.font, cursorText, 8 + this.font.width(playerText) + 24, bottomY + 5, 0xFFFFFFFF, true);
+        String help = "ЛКМ — двигать   Колесо — масштаб   ПКМ — к игроку   Esc — закрыть   |   "
+                + String.format("%.2f", scale) + " пикс/блок   в кадре чанков: " + chunksInView
+                + (manager != null ? " (записано: " + recordedInView + ")" : "");
+        g.text(this.font, help, 8, bottomY + 19, 0xFF9A9AA5, true);
+    }
 
-        super.extractRenderState(graphics, mouseX, mouseY, partialTick);
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+        if (scrollY == 0) {
+            return false;
+        }
+        double mapCX = this.width / 2.0;
+        double mapCY = TOP_BAR + (this.height - TOP_BAR - BOTTOM_BAR) / 2.0;
+        double blockX = centerX + (mouseX - mapCX) / scale;
+        double blockZ = centerZ + (mouseY - mapCY) / scale;
+
+        scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale * (scrollY > 0 ? 1.25 : 0.8)));
+        lastScale = scale;
+
+        // keep the block under the cursor where it was
+        centerX = blockX - (mouseX - mapCX) / scale;
+        centerZ = blockZ - (mouseY - mapCY) / scale;
+        return true;
     }
 
     @Override
     public boolean isPauseScreen() {
         return false;
+    }
+
+    /** Re-reads a few chunks per frame around the player so the picture stays fresh without a lag spike. */
+    private void refreshLoadedChunks(Minecraft mc, net.minecraft.client.multiplayer.ClientLevel level,
+                                     net.minecraft.client.player.LocalPlayer player,
+                                     java.util.Map<Long, MapCache.ChunkColors> cache) {
+        int playerChunkX = (int) Math.floor(player.getX() / 16.0);
+        int playerChunkZ = (int) Math.floor(player.getZ() / 16.0);
+        int radius = mc.options.renderDistance().get() + 1;
+        int side = radius * 2 + 1;
+        int total = side * side;
+        for (int i = 0; i < 24; i++) {
+            refreshCursor = (refreshCursor + 1) % total;
+            int cx = playerChunkX - radius + refreshCursor % side;
+            int cz = playerChunkZ - radius + refreshCursor / side;
+            if (level.hasChunk(cx, cz) && level.getChunk(cx, cz) instanceof LevelChunk chunk) {
+                MapCache.update(level, chunk);
+            }
+        }
+    }
+
+    /** fill() clamped to a rectangle, with floor/ceil rounding so neighbouring cells leave no seams. */
+    private static void fillClipped(GuiGraphicsExtractor g, double x0, double y0, double x1, double y1, int color,
+                                    int minX, int minY, int maxX, int maxY) {
+        int ix0 = (int) Math.floor(Math.max(x0, minX));
+        int iy0 = (int) Math.floor(Math.max(y0, minY));
+        int ix1 = (int) Math.ceil(Math.min(x1, maxX));
+        int iy1 = (int) Math.ceil(Math.min(y1, maxY));
+        if (ix1 <= ix0 || iy1 <= iy0) {
+            return;
+        }
+        g.fill(ix0, iy0, ix1, iy1, color);
     }
 }
