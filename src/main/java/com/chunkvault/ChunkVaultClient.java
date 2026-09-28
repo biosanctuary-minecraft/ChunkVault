@@ -28,8 +28,51 @@ public class ChunkVaultClient implements ClientModInitializer {
                         .then(literal("stop").executes(ctx -> stop(ctx.getSource())))
                         .then(literal("status").executes(ctx -> status(ctx.getSource())))
                         .then(literal("map").executes(ctx -> map(ctx.getSource())))
+                        .then(literal("fixworld")
+                                .then(argument("name", StringArgumentType.word())
+                                        .executes(ctx -> fixWorld(ctx.getSource(), StringArgumentType.getString(ctx, "name")))))
                 )
         );
+    }
+
+    /**
+     * Rewrites data/minecraft/world_gen_settings.dat inside an ALREADY
+     * recorded world (in saves/<name> and/or chunkvault/<name>), so worlds
+     * recorded with the earlier broken file format open without re-recording.
+     * Needs to be run while connected to any server/world (a live level is
+     * required to build the void dimension config from the game's own classes).
+     */
+    private int fixWorld(FabricClientCommandSource source, String name) {
+        var level = Minecraft.getInstance().level;
+        if (level == null) {
+            source.sendFeedback(Component.literal(
+                    "§c[ChunkVault] Нужно быть подключённым к серверу/миру, чтобы собрать настройки. Зайди на сервер и повтори."));
+            return 0;
+        }
+        Path gameDir = FabricLoader.getInstance().getGameDir();
+        Path inSaves = gameDir.resolve("saves").resolve(name);
+        Path inVault = gameDir.resolve("chunkvault").resolve(name);
+
+        int fixed = 0;
+        try {
+            var settings = com.chunkvault.save.VoidWorldGenBuilder.build(level);
+            for (Path target : new Path[]{inSaves, inVault}) {
+                if (java.nio.file.Files.isDirectory(target)) {
+                    com.chunkvault.save.VoidWorldGenBuilder.writeToWorld(target, settings);
+                    fixed++;
+                    source.sendFeedback(Component.literal("§a[ChunkVault] Исправлено: " + target));
+                }
+            }
+        } catch (Exception e) {
+            source.sendFeedback(Component.literal("§c[ChunkVault] Не удалось собрать настройки: " + e));
+            return 0;
+        }
+        if (fixed == 0) {
+            source.sendFeedback(Component.literal(
+                    "§c[ChunkVault] Не нашёл папку мира '" + name + "' ни в saves/, ни в chunkvault/."));
+            return 0;
+        }
+        return 1;
     }
 
     private int map(FabricClientCommandSource source) {
