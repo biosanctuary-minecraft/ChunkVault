@@ -1,6 +1,7 @@
 package com.chunkvault.save;
 
 import com.mojang.serialization.DataResult;
+import net.minecraft.SharedConstants;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.Holder;
 import net.minecraft.core.HolderLookup;
@@ -80,12 +81,32 @@ public final class VoidWorldGenBuilder {
         Tag tag = encoded.result().orElseThrow(() ->
                 new IllegalStateException("failed to encode void WorldDimensions: " + encoded.error()));
 
+        // The game's own error for our previous output was:
+        //   "No key dimensions in MapLike[{}]; No key seed in MapLike[{}]"
+        // i.e. the reader looked for BOTH `dimensions` and `seed` inside a
+        // (then empty) map. Two things were wrong with what we wrote:
+        //  1) WorldDimensions.CODEC alone only produces `dimensions` —
+        //     the file is really the full WorldGenSettings shape, which also
+        //     needs `seed` (plus generate_features / bonus_chest).
+        //  2) world_gen_settings.dat is a saved-data file, and those always
+        //     wrap their payload as { DataVersion: int, data: { ... } };
+        //     with the payload at the root, the reader saw `data` as an
+        //     empty map — hence the empty MapLike[{}] in the message.
+        CompoundTag inner;
         if (tag instanceof CompoundTag compound) {
-            return compound;
+            inner = compound;
+        } else {
+            inner = new CompoundTag();
+            inner.put("dimensions", tag);
         }
-        CompoundTag wrapper = new CompoundTag();
-        wrapper.put("dimensions", tag);
-        return wrapper;
+        inner.putLong("seed", 0L);
+        inner.putBoolean("generate_features", false);
+        inner.putBoolean("bonus_chest", false);
+
+        CompoundTag root = new CompoundTag();
+        root.putInt("DataVersion", SharedConstants.getCurrentVersion().dataVersion().version());
+        root.put("data", inner);
+        return root;
     }
 
     /** Writes the built tag to data/minecraft/world_gen_settings.dat, gzip-compressed like level.dat. */
