@@ -22,7 +22,11 @@ public final class MapCache {
     public static final class ChunkColors {
         /** ARGB per block column, index = localZ * 16 + localX. 0 = no data (void / air column). */
         public final int[] px = new int[256];
-        /** Average colour of the chunk, used when zoomed far out. 0 = nothing visible. */
+        /** Down-sampled (averaged) versions of px: 8x8, 4x4 and 2x2 cells. Much smoother than picking single blocks. */
+        public final int[] l8 = new int[64];
+        public final int[] l4 = new int[16];
+        public final int[] l2 = new int[4];
+        /** Average colour of the whole chunk, used when zoomed far out. 0 = nothing visible. */
         public int avg;
     }
 
@@ -105,7 +109,7 @@ public final class MapCache {
                 // towards the south neighbour's side, darker when it drops.
                 int previousTop = lz > 0 ? tops[(lz - 1) * 16 + lx] : top;
                 int delta = Math.max(-4, Math.min(4, top - previousTop));
-                double shade = 1.0 + delta * 0.07;
+                double shade = 1.0 + delta * 0.10;
                 int r = clamp((int) (((rgb >> 16) & 0xFF) * shade));
                 int g = clamp((int) (((rgb >> 8) & 0xFF) * shade));
                 int b = clamp((int) ((rgb & 0xFF) * shade));
@@ -118,6 +122,10 @@ public final class MapCache {
             }
         }
 
+        downsample(out.px, 16, out.l8, 8);
+        downsample(out.l8, 8, out.l4, 4);
+        downsample(out.l4, 4, out.l2, 2);
+
         if (count > 0) {
             out.avg = 0xFF000000
                     | ((int) (sumR / count) << 16)
@@ -125,6 +133,32 @@ public final class MapCache {
                     | (int) (sumB / count);
         }
         return out;
+    }
+
+    /** Averages square groups of ARGB pixels; groups with no visible pixel stay 0. */
+    private static void downsample(int[] src, int srcSide, int[] dst, int dstSide) {
+        int factor = srcSide / dstSide;
+        for (int dz = 0; dz < dstSide; dz++) {
+            for (int dx = 0; dx < dstSide; dx++) {
+                long r = 0;
+                long g = 0;
+                long b = 0;
+                int n = 0;
+                for (int oz = 0; oz < factor; oz++) {
+                    for (int ox = 0; ox < factor; ox++) {
+                        int c = src[(dz * factor + oz) * srcSide + (dx * factor + ox)];
+                        if (c != 0) {
+                            r += (c >> 16) & 0xFF;
+                            g += (c >> 8) & 0xFF;
+                            b += c & 0xFF;
+                            n++;
+                        }
+                    }
+                }
+                dst[dz * dstSide + dx] = n == 0 ? 0
+                        : 0xFF000000 | ((int) (r / n) << 16) | ((int) (g / n) << 8) | (int) (b / n);
+            }
+        }
     }
 
     /**
