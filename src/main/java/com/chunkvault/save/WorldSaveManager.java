@@ -1,19 +1,31 @@
 package com.chunkvault.save;
 
+import net.minecraft.SharedConstants;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.IntArrayTag;
+import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtIo;
+import net.minecraft.util.ProblemReporter;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.storage.TagValueOutput;
 
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class WorldSaveManager {
@@ -27,6 +39,28 @@ public final class WorldSaveManager {
     // by the in-game map screen to show what's already saved around the
     // player. Not persisted; only matters for the current session's UI.
     private final Set<String> recordedChunks = ConcurrentHashMap.newKeySet();
+
+    /**
+     * Last seen state of every non-player entity standing in a recorded
+     * chunk, keyed by UUID. Entities usually arrive AFTER their chunk, so
+     * they are sampled periodically (see snapshotEntities) and written out
+     * once, when recording stops.
+     */
+    private static final class EntityRecord {
+        final String entitiesFolder;
+        final int chunkX;
+        final int chunkZ;
+        final CompoundTag tag;
+
+        EntityRecord(String entitiesFolder, int chunkX, int chunkZ, CompoundTag tag) {
+            this.entitiesFolder = entitiesFolder;
+            this.chunkX = chunkX;
+            this.chunkZ = chunkZ;
+            this.tag = tag;
+        }
+    }
+
+    private final Map<UUID, EntityRecord> entityRecords = new ConcurrentHashMap<>();
 
     // Track how many chunks/chests we've captured, for /chunkvault status.
     private volatile int chunksSaved = 0;
@@ -136,6 +170,82 @@ public final class WorldSaveManager {
         return recordedChunks.contains(dimensionId + ":" + chunkX + "," + chunkZ);
     }
 
+    public int entitiesSeen() {
+        return entityRecords.size();
+    }
+
+    /**
+     * Samples every non-player entity the client currently knows about that
+     * stands in an already-recorded chunk (dropped items, mobs, item frames,
+     * armor stands, ...). Passengers are skipped — their vehicle stores them.
+     * Called about once a second while recording and once more at stop.
+     */
+    public synchronized void snapshotEntities(ClientLevel level) {
+        String dimensionId = level.dimension().identifier().toString();
+        String entitiesFolder = regionFolderFor(level).replaceAll("region$", "entities");
+        for (Entity entity : level.entitiesForRendering()) {
+            try {
+                if (entity instanceof Player || entity.isPassenger() || entity.isRemoved()
+                        || !entity.getType().canSerialize()) {
+                    continue;
+                }
+                int chunkX = (int) Math.floor(entity.getX() / 16.0);
+                int chunkZ = (int) Math.floor(entity.getZ() / 16.0);
+                if (!recordedChunks.contains(dimensionId + ":" + chunkX + "," + chunkZ)) {
+                    continue;
+                }
+                TagValueOutput output = TagValueOutput.createWithContext(ProblemReporter.DISCARDING, level.registryAccess());
+                output.putString("id", EntityType.getKey(entity.getType()).toString());
+                entity.saveWithoutId(output);
+                entityRecords.put(entity.getUUID(), new EntityRecord(entitiesFolder, chunkX, chunkZ, output.buildResult()));
+            } catch (Throwable ignored) {
+                // one odd entity must never break recording
+            }
+        }
+    }
+
+    /** Writes the collected entities as vanilla entity-storage chunks: entities/r.X.Z.mca, {DataVersion, Position, Entities}. */
+    private void flushEntities() {
+        Map<String, List<EntityRecord>> byChunk = new HashMap<>();
+        for (EntityRecord record : entityRecords.values()) {
+            byChunk.computeIfAbsent(record.entitiesFolder + "|" + record.chunkX + "|" + record.chunkZ,
+                    k -> new ArrayList<>()).add(record);
+        }
+        int dataVersion = SharedConstants.getCurrentVersion().dataVersion().version();
+        for (List<EntityRecord> group : byChunk.values()) {
+            try {
+                EntityRecord first = group.get(0);
+                CompoundTag root = new CompoundTag();
+                root.putInt("DataVersion", dataVersion);
+                root.put("Position", new IntArrayTag(new int[]{first.chunkX, first.chunkZ}));
+                ListTag list = new ListTag();
+                for (EntityRecord record : group) {
+                    list.add(record.tag);
+                }
+                root.put("Entities", list);
+
+                ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+                NbtIo.write(root, new DataOutputStream(bytes));
+
+                int regionX = Math.floorDiv(first.chunkX, 32);
+                int regionZ = Math.floorDiv(first.chunkZ, 32);
+                String key = first.entitiesFolder + ":" + regionX + "," + regionZ;
+                SimpleRegionFile region = openRegions.computeIfAbsent(key, k -> {
+                    try {
+                        Path dir = rootDir.resolve(first.entitiesFolder);
+                        Files.createDirectories(dir);
+                        return new SimpleRegionFile(dir.resolve("r." + regionX + "." + regionZ + ".mca"));
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
+                });
+                region.writeChunk(Math.floorMod(first.chunkX, 32), Math.floorMod(first.chunkZ, 32), bytes.toByteArray());
+            } catch (Exception e) {
+                System.err.println("[ChunkVault] failed to save entities of a chunk: " + e);
+            }
+        }
+    }
+
     /**
      * @param spawnPos the player's position when /chunkvault stop was run,
      *                 or null if it isn't known to be an Overworld position
@@ -152,6 +262,7 @@ public final class WorldSaveManager {
      *                  writing player position entirely.
      */
     public synchronized void closeAndFinish(BlockPos spawnPos, java.util.UUID uuid, CompoundTag playerTag) {
+        flushEntities();
         for (SimpleRegionFile region : openRegions.values()) {
             try {
                 region.close();
