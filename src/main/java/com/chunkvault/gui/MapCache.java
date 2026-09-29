@@ -28,11 +28,28 @@ public final class MapCache {
         public final int[] l2 = new int[4];
         /** Average colour of the whole chunk, used when zoomed far out. 0 = nothing visible. */
         public int avg;
-        /** How many fill() calls this chunk costs at each detail level (horizontal same-colour runs). */
-        public int runs16;
-        public int runs8;
-        public int runs4;
-        public int runs2;
+        /**
+         * Same pictures as px/l8/l4/l2 but with equal-coloured neighbouring
+         * cells greedily merged into big rectangles — one fill() per rectangle
+         * instead of one per cell. This is what makes full 16x16 detail affordable.
+         */
+        public Mesh m16;
+        public Mesh m8;
+        public Mesh m4;
+        public Mesh m2;
+    }
+
+    /** rects[i] packs x | z<<8 | w<<16 | h<<24 (cell units), colors[i] is ARGB. */
+    public static final class Mesh {
+        public final int[] rects;
+        public final int[] colors;
+        public final int count;
+
+        Mesh(int[] rects, int[] colors, int count) {
+            this.rects = rects;
+            this.colors = colors;
+            this.count = count;
+        }
     }
 
     private static final Map<String, Map<Long, ChunkColors>> DIMENSIONS = new ConcurrentHashMap<>();
@@ -110,11 +127,12 @@ public final class MapCache {
                     continue;
                 }
 
-                // Vanilla-map-style relief: brighter when the terrain rises
-                // towards the south neighbour's side, darker when it drops.
-                int previousTop = lz > 0 ? tops[(lz - 1) * 16 + lx] : top;
-                int delta = Math.max(-4, Math.min(4, top - previousTop));
-                double shade = 1.0 + delta * 0.10;
+                // Vanilla-map-style relief with only a few brightness steps: clean
+                // edges, and big flat areas that merge into a handful of rectangles.
+                int northTop = lz > 0 ? tops[(lz - 1) * 16 + lx] : top;
+                int westTop = lx > 0 ? tops[index - 1] : top;
+                int relief = (top - northTop) * 2 + (top - westTop);
+                double shade = relief >= 3 ? 1.12 : relief > 0 ? 1.0 : relief == 0 ? 0.9 : relief > -3 ? 0.78 : 0.66;
                 int r = clamp((int) (((rgb >> 16) & 0xFF) * shade));
                 int g = clamp((int) (((rgb >> 8) & 0xFF) * shade));
                 int b = clamp((int) ((rgb & 0xFF) * shade));
@@ -130,10 +148,10 @@ public final class MapCache {
         downsample(out.px, 16, out.l8, 8);
         downsample(out.l8, 8, out.l4, 4);
         downsample(out.l4, 4, out.l2, 2);
-        out.runs16 = countRuns(out.px, 16);
-        out.runs8 = countRuns(out.l8, 8);
-        out.runs4 = countRuns(out.l4, 4);
-        out.runs2 = countRuns(out.l2, 2);
+        out.m16 = mesh(out.px, 16);
+        out.m8 = mesh(out.l8, 8);
+        out.m4 = mesh(out.l4, 4);
+        out.m2 = mesh(out.l2, 2);
 
         if (count > 0) {
             out.avg = 0xFF000000
@@ -144,25 +162,45 @@ public final class MapCache {
         return out;
     }
 
-    /** Number of horizontal same-colour runs of visible cells — exactly what MapScreen turns into fill() calls. */
-    private static int countRuns(int[] cells, int side) {
-        int runs = 0;
+    /** Greedy 2D merge of equal-coloured, non-empty cells into rectangles. */
+    private static Mesh mesh(int[] cells, int side) {
+        boolean[] used = new boolean[cells.length];
+        int[] rects = new int[cells.length];
+        int[] colors = new int[cells.length];
+        int n = 0;
         for (int z = 0; z < side; z++) {
-            int prev = cells[z * side];
-            if (prev != 0) {
-                runs++;
-            }
-            for (int x = 1; x < side; x++) {
-                int c = cells[z * side + x];
-                if (c != prev) {
-                    if (c != 0) {
-                        runs++;
-                    }
-                    prev = c;
+            for (int x = 0; x < side; x++) {
+                int i = z * side + x;
+                int c = cells[i];
+                if (c == 0 || used[i]) {
+                    continue;
                 }
+                int w = 1;
+                while (x + w < side && !used[i + w] && cells[i + w] == c) {
+                    w++;
+                }
+                int h = 1;
+                grow:
+                while (z + h < side) {
+                    int row = (z + h) * side + x;
+                    for (int k = 0; k < w; k++) {
+                        if (used[row + k] || cells[row + k] != c) {
+                            break grow;
+                        }
+                    }
+                    h++;
+                }
+                for (int dz = 0; dz < h; dz++) {
+                    for (int dx = 0; dx < w; dx++) {
+                        used[(z + dz) * side + x + dx] = true;
+                    }
+                }
+                rects[n] = x | (z << 8) | (w << 16) | (h << 24);
+                colors[n] = c;
+                n++;
             }
         }
-        return runs;
+        return new Mesh(java.util.Arrays.copyOf(rects, n), java.util.Arrays.copyOf(colors, n), n);
     }
 
     /** Averages square groups of ARGB pixels; groups with no visible pixel stay 0. */
