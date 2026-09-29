@@ -37,6 +37,9 @@ public abstract class ChunkCaptureMixin {
                 var manager = RecordingState.get().saveManager();
                 if (manager != null) {
                     manager.saveChunk(level, levelChunk);
+                    // the map only shows recorded chunks: refresh this one on the map
+                    com.chunkvault.gui.MapCache.markDirty(level.dimension().identifier().toString(),
+                            levelChunk.getPos().x(), levelChunk.getPos().z());
                 }
             }
         }
