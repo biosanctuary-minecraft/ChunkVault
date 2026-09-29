@@ -73,8 +73,13 @@ public final class RecordingState {
         return dir;
     }
 
-    private static String sanitize(String name) {
-        String cleaned = name.replaceAll("[^a-zA-Z0-9_\\-]", "_");
+    /**
+     * Folder name for a recording. Letters and digits of any language are kept
+     * (so "мой мир" and "лес" are different folders, not the same "___"),
+     * everything else becomes "_".
+     */
+    public static String sanitize(String name) {
+        String cleaned = name.trim().replaceAll("[^\\p{L}\\p{N}_\\-]", "_");
         return cleaned.isBlank() ? "world" : cleaned;
     }
 
