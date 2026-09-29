@@ -53,7 +53,37 @@ public final class MapCache {
     }
 
     private static final Map<String, Map<Long, ChunkColors>> DIMENSIONS = new ConcurrentHashMap<>();
+    /** Chunks whose picture changed since the map textures last saw them, per dimension. */
+    private static final Map<String, java.util.Set<Long>> DIRTY = new ConcurrentHashMap<>();
+    /** Which 16x16-chunk regions contain at least one known chunk, per dimension. */
+    private static final Map<String, java.util.Set<Long>> REGION_KEYS = new ConcurrentHashMap<>();
     private static Object lastConnection;
+    private static int session;
+    private static volatile int tintVersion;
+
+    /** Changes whenever the connection changes (all map data was wiped). */
+    public static int sessionCounter() {
+        checkSession();
+        return session;
+    }
+
+    public static java.util.Set<Long> dirtyChunks(String dimensionId) {
+        return DIRTY.computeIfAbsent(dimensionId, k -> ConcurrentHashMap.newKeySet());
+    }
+
+    public static java.util.Set<Long> regionKeys(String dimensionId) {
+        checkSession();
+        return REGION_KEYS.computeIfAbsent(dimensionId, k -> ConcurrentHashMap.newKeySet());
+    }
+
+    /** Bumped when recording starts/stops so the map textures re-tint the recorded chunks. */
+    public static int tintVersion() {
+        return tintVersion;
+    }
+
+    public static void bumpTint() {
+        tintVersion++;
+    }
 
     public static long key(int cx, int cz) {
         return (((long) cx) << 32) | (cz & 0xFFFFFFFFL);
@@ -71,6 +101,9 @@ public final class MapCache {
         Object connection = Minecraft.getInstance().getConnection();
         if (connection != lastConnection) {
             DIMENSIONS.clear();
+            DIRTY.clear();
+            REGION_KEYS.clear();
+            session++;
             lastConnection = connection;
         }
     }
@@ -86,7 +119,17 @@ public final class MapCache {
             String dimensionId = level.dimension().identifier().toString();
             boolean hasCeiling = dimensionId.equals("minecraft:the_nether");
             ChunkColors colors = build(level, chunk, hasCeiling);
-            forDimension(dimensionId).put(key(chunk.getPos().x(), chunk.getPos().z()), colors);
+            int cx = chunk.getPos().x();
+            int cz = chunk.getPos().z();
+            long k = key(cx, cz);
+            Map<Long, ChunkColors> map = forDimension(dimensionId);
+            ChunkColors old = map.get(k);
+            if (old != null && java.util.Arrays.equals(old.px, colors.px)) {
+                return; // nothing changed: no re-upload of the region texture
+            }
+            map.put(k, colors);
+            dirtyChunks(dimensionId).add(k);
+            regionKeys(dimensionId).add(key(cx >> 4, cz >> 4));
         } catch (Throwable ignored) {
             // intentionally swallowed
         }
