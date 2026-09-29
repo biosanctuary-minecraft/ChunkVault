@@ -197,12 +197,12 @@ final class MapTextures {
                     continue;
                 }
                 MapCache.ChunkColors c = cache.get(key);
-                boolean tint = isTinted(dimension, cx, cz);
+                boolean show = isShown(dimension, cx, cz);
                 try {
                     for (int i = 0; i < 2; i++) {
                         Lod lod = r.lods[i];
                         if (lod != null) {
-                            writeChunk(lod, i, cx & 15, cz & 15, c, tint);
+                            writeChunk(lod, i, cx & 15, cz & 15, c, show);
                             lod.needsUpload = true;
                         }
                     }
@@ -251,7 +251,10 @@ final class MapTextures {
                 lod = createLod(lodIdx);
                 r.lods[lodIdx] = lod;
                 fullFill(lod, lodIdx, dimension, rx, rz, cache);
-            } else if (lod.tint != tintNow && buildLeft >= cost) {
+            } else if (lod.tint != tintNow) {
+                if (buildLeft < cost) {
+                    return null; // stale (e.g. from an earlier recording) — don't show it, refill next frame
+                }
                 buildLeft -= cost;
                 fullFill(lod, lodIdx, dimension, rx, rz, cache);
             }
@@ -314,30 +317,28 @@ final class MapTextures {
                 int cx = rx * 16 + lx;
                 int cz = rz * 16 + lz;
                 MapCache.ChunkColors c = cache.get(MapCache.key(cx, cz));
-                if (c == null && !lod.ready) {
+                boolean show = c != null && isShown(dimension, cx, cz);
+                if (!show && !lod.ready) {
                     continue; // fresh textures are zero-filled = transparent already
                 }
-                writeChunk(lod, lodIdx, lx, lz, c, c != null && isTinted(dimension, cx, cz));
+                writeChunk(lod, lodIdx, lx, lz, c, show);
             }
         }
         lod.needsUpload = true;
         lod.tint = MapCache.tintVersion();
     }
 
-    /** Writes one chunk's picture (or transparent pixels when the chunk is unknown) into a region texture. */
-    private static void writeChunk(Lod lod, int lodIdx, int lx, int lz, MapCache.ChunkColors c, boolean tint)
+    /** Writes one chunk's picture (or transparent pixels when it must not be shown) into a region texture. */
+    private static void writeChunk(Lod lod, int lodIdx, int lx, int lz, MapCache.ChunkColors c, boolean show)
             throws Throwable {
         int n = PX_PER_CHUNK[lodIdx];
-        int[] src = c == null ? null : (lodIdx == 0 ? c.px : c.l4);
+        int[] src = (c == null || !show) ? null : (lodIdx == 0 ? c.px : c.l4);
         Object img = lod.img;
         int baseX = lx * n;
         int baseY = lz * n;
         for (int y = 0; y < n; y++) {
             for (int x = 0; x < n; x++) {
                 int argb = src == null ? 0 : src[y * n + x];
-                if (tint && argb != 0) {
-                    argb = greenTint(argb);
-                }
                 int v = argb;
                 if (!setterArgb) {
                     v = swapRb(v);
@@ -354,20 +355,10 @@ final class MapTextures {
         return (c & 0xFF00FF00) | ((c >> 16) & 0xFF) | ((c & 0xFF) << 16);
     }
 
-    /** Same faint green as the old per-chunk overlay: chunks already saved by the recording. */
-    private static int greenTint(int argb) {
-        int r = (argb >> 16) & 0xFF;
-        int g = (argb >> 8) & 0xFF;
-        int b = argb & 0xFF;
-        r = (int) (r * 0.85);
-        g = (int) (g * 0.85 + 255 * 0.15);
-        b = (int) (b * 0.85 + 102 * 0.15);
-        return (argb & 0xFF000000) | (r << 16) | (g << 8) | b;
-    }
-
-    private static boolean isTinted(String dimension, int cx, int cz) {
+    /** The map shows only chunks recorded by the running recording. */
+    private static boolean isShown(String dimension, int cx, int cz) {
         var manager = RecordingState.get().saveManager();
-        return manager != null && manager.isRecorded(dimension, cx, cz);
+        return manager != null && RecordingState.get().isActive() && manager.isRecorded(dimension, cx, cz);
     }
 
     // ------------------------------------------------------------------
