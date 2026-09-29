@@ -1,5 +1,6 @@
 package com.chunkvault.gui;
 
+import com.chunkvault.ChunkVaultClient;
 import com.chunkvault.state.RecordingState;
 import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.Minecraft;
@@ -10,21 +11,21 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.world.level.chunk.LevelChunk;
 
 /**
- * Top-down world map:
- *  - real block colours of everything the client has loaded this session
- *    (works with or without a recording running), averaged into 16/8/4/2-cell
- *    detail levels so it stays sharp at every zoom;
- *  - left mouse drag = pan, mouse wheel = zoom towards the cursor,
- *    right click = jump back to the player;
- *  - chunks already saved by /chunkvault are tinted green;
- *  - shows the recording's name, player coordinates and the block / chunk
- *    under the cursor.
+ * Top-down world map.
  *
- * Mouse handling uses the Screen mouse events (MouseButtonEvent) — polling
- * MouseHandler.isLeftPressed() does not work while a screen is open, which
- * is why the first version could not be dragged.
+ * Rendering notes (why it is both sharper and cheaper than before):
+ *  - the map is drawn in real DEVICE pixels (the GUI matrix is scaled by
+ *    1/guiScale for the map layer), so terrain is no longer snapped to the
+ *    coarse GUI-pixel grid — 2-4x finer at typical GUI scales, and the
+ *    hover frame / player arrow can be genuinely thin;
+ *  - every chunk keeps pre-merged rectangles per detail level (MapCache.Mesh),
+ *    so a chunk costs a handful of fill() calls instead of up to 256;
+ *  - visible chunks are found by looking up the on-screen chunk range, not by
+ *    walking the whole cache every frame, and chunk re-reads are throttled and
+ *    paused while dragging.
  *
- * Colours passed to drawing calls must carry an alpha byte (0xFFRRGGBB).
+ * Controls: LMB drag = pan, wheel = zoom to cursor, RMB = back to player.
+ * Top bar button toggles recording: ЗАПИСЬ (start) <-> СТОП (stop).
  */
 public class MapScreen extends Screen {
 
@@ -32,10 +33,8 @@ public class MapScreen extends Screen {
     private static final int BOTTOM_BAR = 18;
     private static final double MIN_SCALE = 0.125; // GUI pixels per block
     private static final double MAX_SCALE = 16.0;
-    /** Upper bound of fill() draw calls per frame — each one is a real GPU draw, not just a rectangle.
-     * Counted from the REAL number of same-colour runs per chunk (MapCache.ChunkColors.runsN), not a
-     * worst case, so far more detail fits into the same budget. Lower it if the map ever lags. */
-    private static final int FILL_BUDGET = 7000;
+    /** Max fill() calls spent on terrain per frame. Lower it if the map ever lags, raise it for more detail. */
+    private static final int RECT_BUDGET = 9000;
 
     private static double lastScale = 1.0;
 
@@ -43,13 +42,27 @@ public class MapScreen extends Screen {
     private double centerZ;
     private double scale = lastScale;
     private int refreshCursor;
+    private int frame;
+    private int lastDragFrame = -1000;
 
-    // stop-recording button (drawn by hand, hit-tested in mouseClicked)
+    // device pixels per GUI pixel, and the map area in device pixels
+    private double dev = 1.0;
+    private int clipX0;
+    private int clipY0;
+    private int clipX1;
+    private int clipY1;
+
+    // visible-chunk scratch buffers (reused every frame, no per-frame allocation)
+    private int[] visCx = new int[512];
+    private int[] visCz = new int[512];
+    private MapCache.ChunkColors[] visCol = new MapCache.ChunkColors[512];
+    private int visCount;
+
+    // record / stop button (drawn by hand, hit-tested in mouseClicked)
     private int btnX0;
     private int btnY0;
     private int btnX1;
     private int btnY1;
-    private boolean btnEnabled;
     private String toast;
     private long toastUntil;
 
@@ -69,6 +82,7 @@ public class MapScreen extends Screen {
     @Override
     public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
         super.extractRenderState(g, mouseX, mouseY, partialTick);
+        frame++;
 
         Minecraft mc = Minecraft.getInstance();
         var player = mc.player;
@@ -91,125 +105,148 @@ public class MapScreen extends Screen {
         final double mapCY = mapY0 + mapH / 2.0;
         boolean inMap = mouseY >= mapY0 && mouseY < mapY1;
 
+        dev = Math.max(1.0, (double) mc.getWindow().getWidth() / (double) this.width);
+        clipX0 = (int) Math.round(mapX0 * dev);
+        clipY0 = (int) Math.round(mapY0 * dev);
+        clipX1 = (int) Math.round(mapX1 * dev);
+        clipY1 = (int) Math.round(mapY1 * dev);
+
         String dimensionId = level.dimension().identifier().toString();
         var cache = MapCache.forDimension(dimensionId);
         refreshLoadedChunks(mc, level, player);
 
-        double ppc = scale * 16.0; // pixels per chunk
+        double ppc = scale * 16.0;   // GUI pixels per chunk
+        double ppcDev = ppc * dev;   // device pixels per chunk
         var manager = RecordingState.get().saveManager();
 
-        // ---- pass 1: real fill() cost per detail level of what is on screen -> pick the detail ----
-        long[] totals = new long[4]; // 16x16, 8x8, 4x4, 2x2
-        for (var entry : cache.entrySet()) {
-            long key = entry.getKey();
-            double sx = mapCX + (MapCache.keyX(key) * 16.0 - centerX) * scale;
-            double sy = mapCY + (MapCache.keyZ(key) * 16.0 - centerZ) * scale;
-            if (!(sx + ppc < mapX0 || sx > mapX1 || sy + ppc < mapY0 || sy > mapY1)) {
-                MapCache.ChunkColors c = entry.getValue();
-                totals[0] += c.runs16;
-                totals[1] += c.runs8;
-                totals[2] += c.runs4;
-                totals[3] += c.runs2;
+        // ---- collect the chunks on screen ----
+        double halfW = (mapW / 2.0) / scale;
+        double halfH = (mapH / 2.0) / scale;
+        int minCx = (int) Math.floor((centerX - halfW) / 16.0);
+        int maxCx = (int) Math.floor((centerX + halfW) / 16.0);
+        int minCz = (int) Math.floor((centerZ - halfH) / 16.0);
+        int maxCz = (int) Math.floor((centerZ + halfH) / 16.0);
+        visCount = 0;
+        long area = (long) (maxCx - minCx + 1) * (long) (maxCz - minCz + 1);
+        if (area <= cache.size() * 2L) {
+            for (int cz = minCz; cz <= maxCz; cz++) {
+                for (int cx = minCx; cx <= maxCx; cx++) {
+                    MapCache.ChunkColors c = cache.get(MapCache.key(cx, cz));
+                    if (c != null) {
+                        addVisible(cx, cz, c);
+                    }
+                }
             }
+        } else {
+            for (var entry : cache.entrySet()) {
+                int cx = MapCache.keyX(entry.getKey());
+                int cz = MapCache.keyZ(entry.getKey());
+                if (cx >= minCx && cx <= maxCx && cz >= minCz && cz <= maxCz) {
+                    addVisible(cx, cz, entry.getValue());
+                }
+            }
+        }
+
+        // ---- pick the finest detail level that fits the fill() budget ----
+        long[] totals = new long[4]; // 16x16, 8x8, 4x4, 2x2
+        for (int i = 0; i < visCount; i++) {
+            MapCache.ChunkColors c = visCol[i];
+            totals[0] += c.m16.count;
+            totals[1] += c.m8.count;
+            totals[2] += c.m4.count;
+            totals[3] += c.m2.count;
         }
         int detail = 1;
         int[] levels = {16, 8, 4, 2};
         for (int i = 0; i < levels.length; i++) {
-            // A cell narrower than one GUI pixel can't be drawn anyway.
-            if (ppc / levels[i] >= 1.0 && totals[i] <= FILL_BUDGET) {
+            // a cell narrower than one device pixel can't be seen anyway
+            if (ppcDev / levels[i] >= 1.0 && totals[i] <= RECT_BUDGET) {
                 detail = levels[i];
                 break;
             }
         }
 
-        // ---- pass 2: draw ----
-        for (var entry : cache.entrySet()) {
-            long key = entry.getKey();
-            int cx = MapCache.keyX(key);
-            int cz = MapCache.keyZ(key);
-            double sx = mapCX + (cx * 16.0 - centerX) * scale;
-            double sy = mapCY + (cz * 16.0 - centerZ) * scale;
-            if (sx + ppc < mapX0 || sx > mapX1 || sy + ppc < mapY0 || sy > mapY1) {
-                continue;
-            }
-            MapCache.ChunkColors colors = entry.getValue();
+        // ================= map layer, drawn in device pixels =================
+        float inv = (float) (1.0 / dev);
+        g.pose().pushMatrix();
+        g.pose().scale(inv, inv);
+
+        for (int i = 0; i < visCount; i++) {
+            int cx = visCx[i];
+            int cz = visCz[i];
+            MapCache.ChunkColors colors = visCol[i];
+            double sx = (mapCX + (cx * 16.0 - centerX) * scale) * dev;
+            double sy = (mapCY + (cz * 16.0 - centerZ) * scale) * dev;
 
             if (detail == 1) {
                 if (colors.avg != 0) {
-                    fillClipped(g, sx, sy, sx + ppc, sy + ppc, colors.avg, mapX0, mapY0, mapX1, mapY1);
+                    fillDev(g, sx, sy, sx + ppcDev, sy + ppcDev, colors.avg);
                 }
             } else {
-                int[] cells = detail == 16 ? colors.px : detail == 8 ? colors.l8 : detail == 4 ? colors.l4 : colors.l2;
-                double cellSize = ppc / detail;
-                // Merge horizontally-adjacent same-colour cells into one wider
-                // fill() call instead of one call per cell — real chunk
-                // terrain is mostly uniform blocks of colour row by row, so
-                // this alone cuts draw calls drastically and is what fixed
-                // the frame-rate crash when the map first opened.
-                for (int cz2 = 0; cz2 < detail; cz2++) {
-                    int runStart = 0;
-                    int runColor = cells[cz2 * detail];
-                    for (int cx2 = 1; cx2 <= detail; cx2++) {
-                        int color = cx2 < detail ? cells[cz2 * detail + cx2] : Integer.MIN_VALUE;
-                        if (color != runColor) {
-                            if (runColor != 0) {
-                                fillClipped(g, sx + runStart * cellSize, sy + cz2 * cellSize,
-                                        sx + cx2 * cellSize, sy + (cz2 + 1) * cellSize,
-                                        runColor, mapX0, mapY0, mapX1, mapY1);
-                            }
-                            runStart = cx2;
-                            runColor = color;
-                        }
-                    }
+                MapCache.Mesh mesh = detail == 16 ? colors.m16 : detail == 8 ? colors.m8
+                        : detail == 4 ? colors.m4 : colors.m2;
+                double cell = ppcDev / detail;
+                for (int k = 0; k < mesh.count; k++) {
+                    int p = mesh.rects[k];
+                    int rx = p & 0xFF;
+                    int rz = (p >> 8) & 0xFF;
+                    int rw = (p >> 16) & 0xFF;
+                    int rh = (p >>> 24) & 0xFF;
+                    fillDev(g, sx + rx * cell, sy + rz * cell, sx + (rx + rw) * cell, sy + (rz + rh) * cell,
+                            mesh.colors[k]);
                 }
             }
+        }
 
-            if (manager != null && manager.isRecorded(dimensionId, cx, cz)) {
-                fillClipped(g, sx, sy, sx + ppc, sy + ppc, 0x2600FF66, mapX0, mapY0, mapX1, mapY1);
+        // chunks already saved by the recording get a faint green tint
+        if (manager != null && visCount <= 2500) {
+            for (int i = 0; i < visCount; i++) {
+                if (manager.isRecorded(dimensionId, visCx[i], visCz[i])) {
+                    double sx = (mapCX + (visCx[i] * 16.0 - centerX) * scale) * dev;
+                    double sy = (mapCY + (visCz[i] * 16.0 - centerZ) * scale) * dev;
+                    fillDev(g, sx, sy, sx + ppcDev, sy + ppcDev, 0x2600FF66);
+                }
             }
         }
 
-        // ---- chunk grid when zoomed in enough ----
+        // chunk grid when zoomed in enough: 1 device pixel wide
         if (ppc >= 48) {
-            double halfW = (mapW / 2.0) / scale;
-            double halfH = (mapH / 2.0) / scale;
-            int firstCx = (int) Math.floor((centerX - halfW) / 16.0);
-            int lastCx = (int) Math.ceil((centerX + halfW) / 16.0);
-            int firstCz = (int) Math.floor((centerZ - halfH) / 16.0);
-            int lastCz = (int) Math.ceil((centerZ + halfH) / 16.0);
-            for (int cx = firstCx; cx <= lastCx; cx++) {
-                double sx = mapCX + (cx * 16.0 - centerX) * scale;
-                fillClipped(g, sx, mapY0, sx + 1, mapY1, 0x30FFFFFF, mapX0, mapY0, mapX1, mapY1);
+            for (int cx = minCx; cx <= maxCx + 1; cx++) {
+                int x = (int) Math.round((mapCX + (cx * 16.0 - centerX) * scale) * dev);
+                fillI(g, x, clipY0, x + 1, clipY1, 0x28FFFFFF);
             }
-            for (int cz = firstCz; cz <= lastCz; cz++) {
-                double sy = mapCY + (cz * 16.0 - centerZ) * scale;
-                fillClipped(g, mapX0, sy, mapX1, sy + 1, 0x30FFFFFF, mapX0, mapY0, mapX1, mapY1);
+            for (int cz = minCz; cz <= maxCz + 1; cz++) {
+                int y = (int) Math.round((mapCY + (cz * 16.0 - centerZ) * scale) * dev);
+                fillI(g, clipX0, y, clipX1, y + 1, 0x28FFFFFF);
             }
         }
 
-        // ---- hovered chunk highlight (like Xaero's) ----
+        // hovered chunk: light fill + a thin (1 device pixel) frame, like Xaero's
         if (inMap) {
             int hbx = (int) Math.floor(centerX + (mouseX - mapCX) / scale);
             int hbz = (int) Math.floor(centerZ + (mouseY - mapCY) / scale);
-            double hx = mapCX + ((hbx >> 4) * 16.0 - centerX) * scale;
-            double hy = mapCY + ((hbz >> 4) * 16.0 - centerZ) * scale;
-            fillClipped(g, hx, hy, hx + ppc, hy + ppc, 0x33FFFFFF, mapX0, mapY0, mapX1, mapY1);
-            int bw = 1;
-            fillClipped(g, hx, hy, hx + ppc, hy + bw, 0xCCFFFFFF, mapX0, mapY0, mapX1, mapY1);
-            fillClipped(g, hx, hy + ppc - bw, hx + ppc, hy + ppc, 0xCCFFFFFF, mapX0, mapY0, mapX1, mapY1);
-            fillClipped(g, hx, hy, hx + bw, hy + ppc, 0xCCFFFFFF, mapX0, mapY0, mapX1, mapY1);
-            fillClipped(g, hx + ppc - bw, hy, hx + ppc, hy + ppc, 0xCCFFFFFF, mapX0, mapY0, mapX1, mapY1);
+            double hx = (mapCX + ((hbx >> 4) * 16.0 - centerX) * scale) * dev;
+            double hy = (mapCY + ((hbz >> 4) * 16.0 - centerZ) * scale) * dev;
+            int x0 = (int) Math.round(hx);
+            int y0 = (int) Math.round(hy);
+            int x1 = (int) Math.round(hx + ppcDev);
+            int y1 = (int) Math.round(hy + ppcDev);
+            fillI(g, x0, y0, x1, y1, 0x1EFFFFFF);
+            fillI(g, x0, y0, x1, y0 + 1, 0xB0FFFFFF);
+            fillI(g, x0, y1 - 1, x1, y1, 0xB0FFFFFF);
+            fillI(g, x0, y0, x0 + 1, y1, 0xB0FFFFFF);
+            fillI(g, x1 - 1, y0, x1, y1, 0xB0FFFFFF);
         }
 
-        // ---- player marker: an arrow pointing where the player looks ----
-        double playerSX = mapCX + (player.getX() - centerX) * scale;
-        double playerSY = mapCY + (player.getZ() - centerZ) * scale;
+        // player arrow, rasterised in device pixels, pointing where the player looks
+        double pcx = (mapCX + (player.getX() - centerX) * scale) * dev;
+        double pcy = (mapCY + (player.getZ() - centerZ) * scale) * dev;
         double yaw = Math.toRadians(player.getYRot());
         // Minecraft yaw 0 = south (+Z, screen down), 90 = west (-X, screen left)
-        double fx = -Math.sin(yaw);
-        double fy = Math.cos(yaw);
-        drawArrow(g, playerSX, playerSY, fx, fy, 1.4, 0xFF101015, mapX0, mapY0, mapX1, mapY1);
-        drawArrow(g, playerSX, playerSY, fx, fy, 1.0, 0xFFFFFFFF, mapX0, mapY0, mapX1, mapY1);
+        drawArrow(g, pcx, pcy, -Math.sin(yaw), Math.cos(yaw), 3.2 * dev + 5.0);
+
+        g.pose().popMatrix();
+        // ================= end of device-pixel layer =================
 
         // ---- bars with text ----
         g.fill(0, 0, this.width, TOP_BAR, 0xFF1A1A22);
@@ -236,18 +273,18 @@ public class MapScreen extends Screen {
         }
         g.text(this.font, nameText, x, 7, nameColor, true);
 
-        // ---- ЗАПИСЬ СТОП button (active only while a recording runs) ----
-        String btnText = "ЗАПИСЬ СТОП";
-        btnEnabled = RecordingState.get().isActive();
+        // ---- one toggle button: ЗАПИСЬ <-> СТОП ----
+        boolean recording = RecordingState.get().isActive();
+        String btnText = recording ? "СТОП" : "ЗАПИСЬ";
         btnX0 = x + this.font.width(nameText) + 10;
         btnX1 = btnX0 + this.font.width(btnText) + 14;
         btnY0 = 3;
         btnY1 = TOP_BAR - 3;
-        boolean btnHover = btnEnabled && mouseX >= btnX0 && mouseX < btnX1 && mouseY >= btnY0 && mouseY < btnY1;
-        int btnBg = !btnEnabled ? 0xFF2A2A32 : btnHover ? 0xFFD03A3A : 0xFF9E2A2A;
-        g.fill(btnX0, btnY0, btnX1, btnY1, btnEnabled ? 0xFFFFFFFF : 0xFF3A3A44);
+        boolean hover = mouseX >= btnX0 && mouseX < btnX1 && mouseY >= btnY0 && mouseY < btnY1;
+        int btnBg = recording ? (hover ? 0xFFD84848 : 0xFFB03030) : (hover ? 0xFF3FB365 : 0xFF2E8B4E);
+        g.fill(btnX0, btnY0, btnX1, btnY1, 0xFFFFFFFF);
         g.fill(btnX0 + 1, btnY0 + 1, btnX1 - 1, btnY1 - 1, btnBg);
-        g.text(this.font, btnText, btnX0 + 7, 7, btnEnabled ? 0xFFFFFFFF : 0xFF77777F, true);
+        g.text(this.font, btnText, btnX0 + 7, 7, 0xFFFFFFFF, true);
 
         String dimText = dimensionId;
         g.text(this.font, dimText, this.width - this.font.width(dimText) - 8, 7, 0xFFCCCCCC, true);
@@ -272,35 +309,96 @@ public class MapScreen extends Screen {
         }
     }
 
+    private void addVisible(int cx, int cz, MapCache.ChunkColors colors) {
+        if (visCount == visCx.length) {
+            int n = visCount * 2;
+            visCx = java.util.Arrays.copyOf(visCx, n);
+            visCz = java.util.Arrays.copyOf(visCz, n);
+            visCol = java.util.Arrays.copyOf(visCol, n);
+        }
+        visCx[visCount] = cx;
+        visCz[visCount] = cz;
+        visCol[visCount] = colors;
+        visCount++;
+    }
+
+    // ------------------------------------------------------------------
+    // Drawing helpers (device-pixel coordinates)
+    // ------------------------------------------------------------------
+
+    /** Rounds both edges (neighbouring rectangles share an edge -> no seams, no overlap) and clips to the map. */
+    private void fillDev(GuiGraphicsExtractor g, double x0, double y0, double x1, double y1, int color) {
+        int ix0 = (int) Math.round(x0);
+        int iy0 = (int) Math.round(y0);
+        int ix1 = (int) Math.round(x1);
+        int iy1 = (int) Math.round(y1);
+        if (ix1 <= ix0 && x1 > x0) {
+            ix1 = ix0 + 1;
+        }
+        if (iy1 <= iy0 && y1 > y0) {
+            iy1 = iy0 + 1;
+        }
+        fillI(g, ix0, iy0, ix1, iy1, color);
+    }
+
+    private void fillI(GuiGraphicsExtractor g, int x0, int y0, int x1, int y1, int color) {
+        int ax0 = Math.max(x0, clipX0);
+        int ay0 = Math.max(y0, clipY0);
+        int ax1 = Math.min(x1, clipX1);
+        int ay1 = Math.min(y1, clipY1);
+        if (ax1 > ax0 && ay1 > ay0) {
+            g.fill(ax0, ay0, ax1, ay1, color);
+        }
+    }
+
     /**
-     * Draws the player arrow with fill() only: the arrow polygon (tip, two
-     * back corners, notch) is rotated to the player's facing and rasterised
-     * row by row into horizontal runs. {@code grow} scales it (used for the outline).
+     * Player arrow (tip, two back corners, notch) with a 1-device-pixel dark
+     * outline, rotated to the facing direction (fx, fy) and rasterised row by
+     * row into horizontal runs of one colour.
      */
-    private static void drawArrow(GuiGraphicsExtractor g, double cx, double cy, double fx, double fy,
-                                  double grow, int color, int minX, int minY, int maxX, int maxY) {
-        double len = 8.0 * grow;
-        double wid = 6.0 * grow;
-        int r = (int) Math.ceil(len) + 2;
-        int icx = (int) Math.floor(cx);
-        int icy = (int) Math.floor(cy);
-        for (int iy = icy - r; iy <= icy + r; iy++) {
-            int runStart = Integer.MIN_VALUE;
-            for (int ix = icx - r; ix <= icx + r + 1; ix++) {
-                boolean in = false;
-                if (ix <= icx + r) {
+    private void drawArrow(GuiGraphicsExtractor g, double cx, double cy, double fx, double fy, double len) {
+        if (cx < clipX0 - len || cx > clipX1 + len || cy < clipY0 - len || cy > clipY1 + len) {
+            return;
+        }
+        double wid = len * 0.72;
+        double tipU = len;
+        double backU = -0.8 * len;
+        double notchU = -0.3 * len;
+        double reach = len + 3;
+        int xMin = (int) Math.floor(cx - reach);
+        int xMax = (int) Math.ceil(cx + reach);
+        int yMin = (int) Math.floor(cy - reach);
+        int yMax = (int) Math.ceil(cy + reach);
+        for (int iy = yMin; iy <= yMax; iy++) {
+            int runStart = xMin;
+            int runClass = 0;
+            for (int ix = xMin; ix <= xMax + 1; ix++) {
+                int cls = 0;
+                if (ix <= xMax) {
                     double px = ix + 0.5 - cx;
                     double py = iy + 0.5 - cy;
                     double u = px * fx + py * fy;   // along the facing direction
                     double v = -px * fy + py * fx;  // sideways
-                    in = inTri(u, v, len, 0, -0.8 * len, wid, -0.3 * len, 0)
-                            || inTri(u, v, len, 0, -0.3 * len, 0, -0.8 * len, -wid);
+                    if (u > backU - 2 && u < tipU + 2 && Math.abs(v) < wid + 2) {
+                        if (inTri(u, v, tipU, 0, backU, wid, notchU, 0)
+                                || inTri(u, v, tipU, 0, notchU, 0, backU, -wid)) {
+                            cls = 2;
+                        } else {
+                            double d = Math.min(
+                                    Math.min(segDist(u, v, tipU, 0, backU, wid), segDist(u, v, backU, wid, notchU, 0)),
+                                    Math.min(segDist(u, v, notchU, 0, backU, -wid), segDist(u, v, backU, -wid, tipU, 0)));
+                            if (d <= 1.1) {
+                                cls = 1;
+                            }
+                        }
+                    }
                 }
-                if (in && runStart == Integer.MIN_VALUE) {
+                if (cls != runClass) {
+                    if (runClass != 0) {
+                        fillI(g, runStart, iy, ix, iy + 1, runClass == 2 ? 0xFFFFFFFF : 0xE0000000);
+                    }
                     runStart = ix;
-                } else if (!in && runStart != Integer.MIN_VALUE) {
-                    fillClipped(g, runStart, iy, ix, iy + 1, color, minX, minY, maxX, maxY);
-                    runStart = Integer.MIN_VALUE;
+                    runClass = cls;
                 }
             }
         }
@@ -316,20 +414,25 @@ public class MapScreen extends Screen {
         return !(neg && pos);
     }
 
+    private static double segDist(double px, double py, double ax, double ay, double bx, double by) {
+        double dx = bx - ax;
+        double dy = by - ay;
+        double t = ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy);
+        t = Math.max(0, Math.min(1, t));
+        double qx = ax + t * dx - px;
+        double qy = ay + t * dy - py;
+        return Math.sqrt(qx * qx + qy * qy);
+    }
+
     // ------------------------------------------------------------------
-    // Mouse input (Screen events; the old polling approach never fired)
+    // Mouse input (Screen events)
     // ------------------------------------------------------------------
 
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean isDoubleClick) {
-        if (event.button() == InputConstants.MOUSE_BUTTON_LEFT && btnEnabled
+        if (event.button() == InputConstants.MOUSE_BUTTON_LEFT
                 && event.x() >= btnX0 && event.x() < btnX1 && event.y() >= btnY0 && event.y() < btnY1) {
-            var result = com.chunkvault.ChunkVaultClient.stopRecording();
-            if (result != null) {
-                toast = "Запись остановлена: " + result.chunks() + " чанков, "
-                        + result.chests() + " контейнеров, " + result.entities() + " сущностей";
-                toastUntil = System.currentTimeMillis() + 6000;
-            }
+            toggleRecording();
             return true;
         }
         if (event.button() == InputConstants.MOUSE_BUTTON_RIGHT) {
@@ -342,11 +445,40 @@ public class MapScreen extends Screen {
         return super.mouseClicked(event, isDoubleClick);
     }
 
+    /** ЗАПИСЬ starts (continuing the last map's name, or a fresh timestamped one); СТОП stops and saves. */
+    private void toggleRecording() {
+        if (RecordingState.get().isActive()) {
+            var result = ChunkVaultClient.stopRecording();
+            if (result != null) {
+                showToast("Запись остановлена: " + result.chunks() + " чанков, "
+                        + result.chests() + " контейнеров, " + result.entities() + " сущностей");
+            }
+            return;
+        }
+        if (Minecraft.getInstance().level == null) {
+            return;
+        }
+        String name = RecordingState.get().lastSessionName();
+        if (name == null || name.isBlank()) {
+            name = "map_" + new java.text.SimpleDateFormat("yyyyMMdd_HHmmss").format(new java.util.Date());
+        }
+        int captured = ChunkVaultClient.startRecording(name);
+        if (captured >= 0) {
+            showToast("Запись начата: " + name + " (сразу захвачено " + captured + " чанков)");
+        }
+    }
+
+    private void showToast(String text) {
+        toast = text;
+        toastUntil = System.currentTimeMillis() + 5000;
+    }
+
     @Override
     public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
         if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
             centerX -= dragX / scale;
             centerZ -= dragY / scale;
+            lastDragFrame = frame;
             return true;
         }
         return super.mouseDragged(event, dragX, dragY);
@@ -376,37 +508,27 @@ public class MapScreen extends Screen {
         return false;
     }
 
-    /** Re-reads a few chunks per frame around the player so the picture stays fresh without a lag spike. */
+    /**
+     * Re-reads one chunk around the player every few frames so the picture
+     * stays fresh. Chunk packets already feed the cache (ChunkCaptureMixin),
+     * so this is only a slow top-up; it is paused while dragging so panning
+     * never pays for chunk scans (the Nether floor search is expensive).
+     */
     private void refreshLoadedChunks(Minecraft mc, net.minecraft.client.multiplayer.ClientLevel level,
                                      net.minecraft.client.player.LocalPlayer player) {
+        if (frame % 4 != 0 || frame - lastDragFrame < 15) {
+            return;
+        }
         int playerChunkX = (int) Math.floor(player.getX() / 16.0);
         int playerChunkZ = (int) Math.floor(player.getZ() / 16.0);
         int radius = mc.options.renderDistance().get() + 1;
         int side = radius * 2 + 1;
         int total = side * side;
-        // Capped low on purpose: each refreshed chunk costs up to 256
-        // getMapColor() lookups, and this runs every single frame the map is
-        // open — 24/frame was the other half of the original lag spike.
-        for (int i = 0; i < 6; i++) {
-            refreshCursor = (refreshCursor + 1) % total;
-            int cx = playerChunkX - radius + refreshCursor % side;
-            int cz = playerChunkZ - radius + refreshCursor / side;
-            if (level.hasChunk(cx, cz) && level.getChunk(cx, cz) instanceof LevelChunk chunk) {
-                MapCache.update(level, chunk);
-            }
+        refreshCursor = (refreshCursor + 1) % total;
+        int cx = playerChunkX - radius + refreshCursor % side;
+        int cz = playerChunkZ - radius + refreshCursor / side;
+        if (level.hasChunk(cx, cz) && level.getChunk(cx, cz) instanceof LevelChunk chunk) {
+            MapCache.update(level, chunk);
         }
-    }
-
-    /** fill() clamped to a rectangle, with floor/ceil rounding so neighbouring cells leave no seams. */
-    private static void fillClipped(GuiGraphicsExtractor g, double x0, double y0, double x1, double y1, int color,
-                                    int minX, int minY, int maxX, int maxY) {
-        int ix0 = (int) Math.floor(Math.max(x0, minX));
-        int iy0 = (int) Math.floor(Math.max(y0, minY));
-        int ix1 = (int) Math.ceil(Math.min(x1, maxX));
-        int iy1 = (int) Math.ceil(Math.min(y1, maxY));
-        if (ix1 <= ix0 || iy1 <= iy0) {
-            return;
-        }
-        g.fill(ix0, iy0, ix1, iy1, color);
     }
 }
