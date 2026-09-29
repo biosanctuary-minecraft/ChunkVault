@@ -1,6 +1,7 @@
 package com.chunkvault.gui;
 
 import com.chunkvault.ChunkVaultClient;
+import com.chunkvault.state.AutoRecord;
 import com.chunkvault.state.RecordingState;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
@@ -22,9 +23,9 @@ import java.util.stream.Stream;
 
 /**
  * Opens when ЗАПИСЬ is pressed: a small "explorer" of the chunkvault folder.
- * Either type a new name (new world folder) or pick an existing folder and
- * record into it — chunks you record again replace the old copies, chunks
- * you don't visit stay as they were.
+ * Click a folder to put its name into the field (or type a new name), then
+ * "Начать запись". Recording into a folder that already exists asks for
+ * confirmation first. The toggle below the field is the per-server auto-record.
  */
 public class RecordingPickerScreen extends Screen {
 
@@ -36,11 +37,13 @@ public class RecordingPickerScreen extends Screen {
 
     private final MapScreen parent;
     private final List<Entry> entries = new ArrayList<>();
-    private int selected = -1;
     private int scroll;
     private EditBox nameBox;
     private String error;
+    /** Survives init() (window resize, coming back from the confirmation screen). */
+    private String typedKeep = "";
     private int listBottom;
+    private final String serverKey = AutoRecord.serverKey();
 
     public RecordingPickerScreen(MapScreen parent) {
         super(Component.literal("ChunkVault — куда записывать?"));
@@ -88,45 +91,56 @@ public class RecordingPickerScreen extends Screen {
 
         nameBox = new EditBox(this.font, x, y0 + 12, W, 20, Component.literal("Имя"));
         nameBox.setMaxLength(48);
+        nameBox.setValue(typedKeep);
         this.addRenderableWidget(nameBox);
 
         int half = (W - 6) / 2;
-        this.addRenderableWidget(Button.builder(Component.literal("Создать и записать"), b -> startNew())
-                .bounds(x, y0 + 38, half, 20)
+        this.addRenderableWidget(Button.builder(Component.literal(autoLabel()), b -> {
+                    AutoRecord.setAuto(serverKey, !AutoRecord.isAuto(serverKey));
+                    b.setMessage(Component.literal(autoLabel()));
+                })
+                .bounds(x, y0 + 38, W, 20)
                 .build());
-        this.addRenderableWidget(Button.builder(Component.literal("Записать в выбранный"), b -> startSelected())
-                .bounds(x + half + 6, y0 + 38, half, 20)
+        this.addRenderableWidget(Button.builder(Component.literal("Начать запись"), b -> tryStart())
+                .bounds(x, y0 + 64, half, 20)
                 .build());
         this.addRenderableWidget(Button.builder(Component.literal("Отмена"), b -> this.onClose())
-                .bounds(x, y0 + 64, W, 20)
+                .bounds(x + half + 6, y0 + 64, half, 20)
                 .build());
     }
 
-    private void startNew() {
+    private String autoLabel() {
+        return "Автозапись на этом сервере: " + (AutoRecord.isAuto(serverKey) ? "ВКЛ" : "ВЫКЛ");
+    }
+
+    /** Starts right away for a new name; asks for confirmation when the folder already exists. */
+    private void tryStart() {
         String raw = nameBox.getValue().trim();
         if (raw.isEmpty()) {
-            error = "Введите имя для новой записи";
+            error = "Введите имя или выберите мир в списке";
             return;
         }
-        start(RecordingState.sanitize(raw));
-    }
-
-    private void startSelected() {
-        if (selected < 0 || selected >= entries.size()) {
-            error = "Сначала выберите мир в списке";
-            return;
+        String folder = RecordingState.sanitize(raw);
+        String existing = entries.stream().map(Entry::name).filter(n -> n.equalsIgnoreCase(folder))
+                .findFirst().orElse(null);
+        if (existing != null) {
+            Minecraft.getInstance().setScreenAndShow(new ConfirmRecordingScreen(this, existing, () -> start(existing)));
+        } else {
+            start(folder);
         }
-        start(entries.get(selected).name());
     }
 
-    private void start(String folderName) {
+    /** @return true when recording started (and this screen was left) */
+    boolean start(String folderName) {
         int captured = ChunkVaultClient.startRecording(folderName);
         if (captured < 0) {
             error = "Запись уже идёт";
-            return;
+            return false;
         }
+        AutoRecord.setWorld(serverKey, folderName);
         Minecraft.getInstance().setScreenAndShow(parent);
         parent.showToast("Запись начата: " + folderName + " (сразу захвачено " + captured + " чанков)");
+        return true;
     }
 
     @Override
@@ -163,13 +177,19 @@ public class RecordingPickerScreen extends Screen {
             g.centeredText(this.font, "Здесь пока пусто — создайте первую запись ниже", this.width / 2,
                     LIST_TOP + 16, 0xFF888899);
         }
+        if (nameBox != null) {
+            typedKeep = nameBox.getValue();
+        }
+        String typedName = nameBox == null ? "" : nameBox.getValue().trim();
+        String typedFolder = typedName.isEmpty() ? null : RecordingState.sanitize(typedName);
         int rows = visibleRows();
         scroll = Math.max(0, Math.min(scroll, Math.max(0, entries.size() - rows)));
         for (int i = 0; i < rows && scroll + i < entries.size(); i++) {
             int idx = scroll + i;
             int ry = LIST_TOP + i * ROW_H;
             boolean hover = mouseX >= x && mouseX < x + W && mouseY >= ry && mouseY < ry + ROW_H;
-            int bg = idx == selected ? 0xFF3A5A8A : hover ? 0xFF262A34 : 0xFF1C1F27;
+            boolean chosen = typedFolder != null && entries.get(idx).name().equalsIgnoreCase(typedFolder);
+            int bg = chosen ? 0xFF3A5A8A : hover ? 0xFF262A34 : 0xFF1C1F27;
             g.fill(x, ry, x + W, ry + ROW_H - 1, bg);
             Entry e = entries.get(idx);
             int dateW = this.font.width(e.date());
@@ -184,18 +204,13 @@ public class RecordingPickerScreen extends Screen {
         // ---- new name ----
         int y0 = listBottom + 8;
         g.text(this.font, "Новая запись — имя:", x, y0 + 2, 0xFFAAAAAA, true);
-        String typed = nameBox == null ? "" : nameBox.getValue().trim();
-        if (!typed.isEmpty()) {
-            String folder = RecordingState.sanitize(typed);
-            boolean exists = entries.stream().anyMatch(e -> e.name().equals(folder));
-            String hint = "→ " + folder + (exists ? "  (уже есть — запись пойдёт в неё)" : "");
+        if (typedFolder != null) {
+            boolean exists = entries.stream().anyMatch(e -> e.name().equalsIgnoreCase(typedFolder));
+            String hint = "→ " + typedFolder + (exists ? "  (уже есть)" : "");
             g.text(this.font, fit(hint, W - 130), x + 124, y0 + 2, exists ? 0xFFFFD070 : 0xFF70FF90, true);
         }
-
-        String note = "В существующий мир: заново записанные чанки заменят старые, остальные останутся.";
-        g.text(this.font, fit(note, W), x, y0 + 90, 0xFF808090, true);
         if (error != null) {
-            g.text(this.font, error, x, y0 + 102, 0xFFFF7070, true);
+            g.text(this.font, error, x, y0 + 90, 0xFFFF7070, true);
         }
 
         super.extractRenderState(g, mouseX, mouseY, partialTick);
@@ -207,7 +222,7 @@ public class RecordingPickerScreen extends Screen {
         if (event.x() >= x && event.x() < x + W && event.y() >= LIST_TOP && event.y() < listBottom) {
             int idx = scroll + (int) ((event.y() - LIST_TOP) / ROW_H);
             if (idx >= 0 && idx < entries.size()) {
-                selected = idx;
+                nameBox.setValue(entries.get(idx).name());
                 error = null;
             }
             return true;
