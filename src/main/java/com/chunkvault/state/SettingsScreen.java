@@ -21,8 +21,25 @@ public class SettingsScreen extends Screen {
 
     private EditBox seedBox;
 
+    private final Screen parent;
+
     public SettingsScreen() {
+        this(null);
+    }
+
+    /** @param parent screen to go back to when closed (null = back to the game) */
+    public SettingsScreen(Screen parent) {
         super(Component.literal("ChunkVault — настройки"));
+        this.parent = parent;
+    }
+
+    @Override
+    public void onClose() {
+        if (parent != null) {
+            net.minecraft.client.Minecraft.getInstance().setScreenAndShow(parent);
+        } else {
+            super.onClose();
+        }
     }
 
     @Override
