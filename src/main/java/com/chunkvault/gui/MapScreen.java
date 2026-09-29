@@ -32,8 +32,9 @@ public class MapScreen extends Screen {
     private static final int BOTTOM_BAR = 34;
     private static final double MIN_SCALE = 0.125; // GUI pixels per block
     private static final double MAX_SCALE = 16.0;
-    /** Upper bound of fill() calls per frame; the detail level is lowered until the picture fits. */
-    private static final int FILL_BUDGET = 45000;
+    /** Upper bound of fill() draw calls per frame — each one is a real GPU draw, not just a rectangle.
+     * The previous, much higher budget is what caused the slideshow-level lag when the map first opened. */
+    private static final int FILL_BUDGET = 4000;
 
     private static double lastScale = 1.0;
 
@@ -98,7 +99,8 @@ public class MapScreen extends Screen {
         }
         int detail = 1;
         for (int candidate : new int[]{16, 8, 4, 2}) {
-            if (ppc / candidate >= 0.75 && (long) visible * candidate * candidate <= FILL_BUDGET) {
+            // Skip detail levels whose cells would be under 2 device pixels wide — invisible, pure GPU waste.
+            if (ppc / candidate >= 2.0 && (long) visible * candidate * candidate <= FILL_BUDGET) {
                 detail = candidate;
                 break;
             }
@@ -124,13 +126,24 @@ public class MapScreen extends Screen {
             } else {
                 int[] cells = detail == 16 ? colors.px : detail == 8 ? colors.l8 : detail == 4 ? colors.l4 : colors.l2;
                 double cellSize = ppc / detail;
+                // Merge horizontally-adjacent same-colour cells into one wider
+                // fill() call instead of one call per cell — real chunk
+                // terrain is mostly uniform blocks of colour row by row, so
+                // this alone cuts draw calls drastically and is what fixed
+                // the frame-rate crash when the map first opened.
                 for (int cz2 = 0; cz2 < detail; cz2++) {
-                    for (int cx2 = 0; cx2 < detail; cx2++) {
-                        int color = cells[cz2 * detail + cx2];
-                        if (color != 0) {
-                            fillClipped(g, sx + cx2 * cellSize, sy + cz2 * cellSize,
-                                    sx + (cx2 + 1) * cellSize, sy + (cz2 + 1) * cellSize,
-                                    color, mapX0, mapY0, mapX1, mapY1);
+                    int runStart = 0;
+                    int runColor = cells[cz2 * detail];
+                    for (int cx2 = 1; cx2 <= detail; cx2++) {
+                        int color = cx2 < detail ? cells[cz2 * detail + cx2] : Integer.MIN_VALUE;
+                        if (color != runColor) {
+                            if (runColor != 0) {
+                                fillClipped(g, sx + runStart * cellSize, sy + cz2 * cellSize,
+                                        sx + cx2 * cellSize, sy + (cz2 + 1) * cellSize,
+                                        runColor, mapX0, mapY0, mapX1, mapY1);
+                            }
+                            runStart = cx2;
+                            runColor = color;
                         }
                     }
                 }
@@ -273,7 +286,10 @@ public class MapScreen extends Screen {
         int radius = mc.options.renderDistance().get() + 1;
         int side = radius * 2 + 1;
         int total = side * side;
-        for (int i = 0; i < 24; i++) {
+        // Capped low on purpose: each refreshed chunk costs up to 256
+        // getMapColor() lookups, and this runs every single frame the map is
+        // open — 24/frame was the other half of the original lag spike.
+        for (int i = 0; i < 6; i++) {
             refreshCursor = (refreshCursor + 1) % total;
             int cx = playerChunkX - radius + refreshCursor % side;
             int cz = playerChunkZ - radius + refreshCursor / side;
