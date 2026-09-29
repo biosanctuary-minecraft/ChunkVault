@@ -341,9 +341,6 @@ public class MapScreen extends Screen {
         g.fill(setX0 + 1, btnY0 + 1, setX1 - 1, btnY1 - 1, setHover ? 0xFF6B7FA8 : 0xFF4E5F82);
         g.text(this.font, setText, setX0 + 7, 7, 0xFFFFFFFF, true);
 
-        String dimText = dimensionId;
-        g.text(this.font, dimText, this.width - this.font.width(dimText) - 8, 7, 0xFFCCCCCC, true);
-
         // ---- bottom bar: only coordinates and chunks ----
         String info = "Ты: X: " + (int) Math.floor(player.getX())
                 + "  Y: " + (int) Math.floor(player.getY())
@@ -354,6 +351,8 @@ public class MapScreen extends Screen {
             info += "  Курсор: X: " + bx + "  Z: " + bz + "  Чанк: " + (bx >> 4) + ", " + (bz >> 4) + "  |";
         }
         g.text(this.font, info, 8, this.height - BOTTOM_BAR + 5, 0xFFFFFFFF, true);
+        g.text(this.font, dimensionId, this.width - this.font.width(dimensionId) - 8,
+                this.height - BOTTOM_BAR + 5, 0xFFCCCCCC, true);
 
         // ---- short result message after pressing the button ----
         if (toast != null && System.currentTimeMillis() < toastUntil) {
@@ -418,7 +417,7 @@ public class MapScreen extends Screen {
         for (int cz = pcz - r; cz <= pcz + r; cz++) {
             int runStart = Integer.MIN_VALUE;
             for (int cx = pcx - r; cx <= pcx + r + 1; cx++) {
-                boolean loaded = cx <= pcx + r && level.hasChunk(cx, cz);
+                boolean loaded = cx <= pcx + r && isLoaded(level, cx, cz);
                 if (loaded && runStart == Integer.MIN_VALUE) {
                     runStart = cx;
                 } else if (!loaded && runStart != Integer.MIN_VALUE) {
@@ -436,6 +435,16 @@ public class MapScreen extends Screen {
                 }
             }
         }
+    }
+
+    /**
+     * True only for a chunk the client really holds. level.hasChunk() said "yes"
+     * for everything inside the render distance, including chunks that never
+     * arrived; the client hands out a shared EmptyLevelChunk placeholder for those.
+     */
+    private static boolean isLoaded(net.minecraft.client.multiplayer.ClientLevel level, int cx, int cz) {
+        var chunk = level.getChunk(cx, cz);
+        return chunk instanceof LevelChunk && !(chunk instanceof net.minecraft.world.level.chunk.EmptyLevelChunk);
     }
 
     private void addVisible(int cx, int cz, MapCache.ChunkColors colors) {
@@ -579,7 +588,7 @@ public class MapScreen extends Screen {
         return super.mouseClicked(event, isDoubleClick);
     }
 
-    /** ЗАПИСЬ starts (continuing the last map's name, or a fresh timestamped one); СТОП stops and saves. */
+    /** СТОП stops and saves right away; ЗАПИСЬ opens the world picker (new name or an existing folder). */
     private void toggleRecording() {
         if (RecordingState.get().isActive()) {
             var result = ChunkVaultClient.stopRecording();
@@ -592,17 +601,10 @@ public class MapScreen extends Screen {
         if (Minecraft.getInstance().level == null) {
             return;
         }
-        String name = RecordingState.get().lastSessionName();
-        if (name == null || name.isBlank()) {
-            name = "map_" + new java.text.SimpleDateFormat("yyyyMMdd_HHmmss").format(new java.util.Date());
-        }
-        int captured = ChunkVaultClient.startRecording(name);
-        if (captured >= 0) {
-            showToast("Запись начата: " + name + " (сразу захвачено " + captured + " чанков)");
-        }
+        Minecraft.getInstance().setScreenAndShow(new RecordingPickerScreen(this));
     }
 
-    private void showToast(String text) {
+    void showToast(String text) {
         toast = text;
         toastUntil = System.currentTimeMillis() + 5000;
     }
@@ -661,7 +663,8 @@ public class MapScreen extends Screen {
         refreshCursor = (refreshCursor + 1) % total;
         int cx = playerChunkX - radius + refreshCursor % side;
         int cz = playerChunkZ - radius + refreshCursor / side;
-        if (level.hasChunk(cx, cz) && level.getChunk(cx, cz) instanceof LevelChunk chunk) {
+        var got = level.getChunk(cx, cz);
+        if (got instanceof LevelChunk chunk && !(got instanceof net.minecraft.world.level.chunk.EmptyLevelChunk)) {
             MapCache.update(level, chunk);
         }
     }
