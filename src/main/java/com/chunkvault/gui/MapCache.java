@@ -28,6 +28,11 @@ public final class MapCache {
         public final int[] l2 = new int[4];
         /** Average colour of the whole chunk, used when zoomed far out. 0 = nothing visible. */
         public int avg;
+        /** How many fill() calls this chunk costs at each detail level (horizontal same-colour runs). */
+        public int runs16;
+        public int runs8;
+        public int runs4;
+        public int runs2;
     }
 
     private static final Map<String, Map<Long, ChunkColors>> DIMENSIONS = new ConcurrentHashMap<>();
@@ -125,6 +130,10 @@ public final class MapCache {
         downsample(out.px, 16, out.l8, 8);
         downsample(out.l8, 8, out.l4, 4);
         downsample(out.l4, 4, out.l2, 2);
+        out.runs16 = countRuns(out.px, 16);
+        out.runs8 = countRuns(out.l8, 8);
+        out.runs4 = countRuns(out.l4, 4);
+        out.runs2 = countRuns(out.l2, 2);
 
         if (count > 0) {
             out.avg = 0xFF000000
@@ -133,6 +142,27 @@ public final class MapCache {
                     | (int) (sumB / count);
         }
         return out;
+    }
+
+    /** Number of horizontal same-colour runs of visible cells — exactly what MapScreen turns into fill() calls. */
+    private static int countRuns(int[] cells, int side) {
+        int runs = 0;
+        for (int z = 0; z < side; z++) {
+            int prev = cells[z * side];
+            if (prev != 0) {
+                runs++;
+            }
+            for (int x = 1; x < side; x++) {
+                int c = cells[z * side + x];
+                if (c != prev) {
+                    if (c != 0) {
+                        runs++;
+                    }
+                    prev = c;
+                }
+            }
+        }
+        return runs;
     }
 
     /** Averages square groups of ARGB pixels; groups with no visible pixel stay 0. */
