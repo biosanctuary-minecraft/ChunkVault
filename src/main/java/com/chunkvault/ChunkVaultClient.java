@@ -25,6 +25,10 @@ public class ChunkVaultClient implements ClientModInitializer {
                 openMapNextTick = false;
                 Minecraft.getInstance().setScreenAndShow(new com.chunkvault.gui.MapScreen());
             }
+            if (openSettingsNextTick) {
+                openSettingsNextTick = false;
+                Minecraft.getInstance().setScreenAndShow(new com.chunkvault.gui.SettingsScreen());
+            }
 
             // While recording, sample entities (mobs, dropped items, frames...) every 2 seconds.
             if (++tickCounter % 40 == 0 && RecordingState.get().isActive()) {
@@ -44,6 +48,7 @@ public class ChunkVaultClient implements ClientModInitializer {
                         .then(literal("stop").executes(ctx -> stop(ctx.getSource())))
                         .then(literal("status").executes(ctx -> status(ctx.getSource())))
                         .then(literal("map").executes(ctx -> map(ctx.getSource())))
+                        .then(literal("settings").executes(ctx -> settings(ctx.getSource())))
                         .then(literal("fixworld")
                                 .then(argument("name", StringArgumentType.word())
                                         .executes(ctx -> fixWorld(ctx.getSource(), StringArgumentType.getString(ctx, "name")))))
@@ -97,10 +102,16 @@ public class ChunkVaultClient implements ClientModInitializer {
     // "flashed and vanished"). So the command only raises this flag, and the
     // screen is opened from the next client tick, once chat is already gone.
     private static volatile boolean openMapNextTick = false;
+    private static volatile boolean openSettingsNextTick = false;
     private static int tickCounter = 0;
 
     private int map(FabricClientCommandSource source) {
         openMapNextTick = true;
+        return 1;
+    }
+
+    private int settings(FabricClientCommandSource source) {
+        openSettingsNextTick = true;
         return 1;
     }
 
