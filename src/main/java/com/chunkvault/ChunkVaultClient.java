@@ -181,10 +181,13 @@ public class ChunkVaultClient implements ClientModInitializer {
         return count;
     }
 
-    private int stop(FabricClientCommandSource source) {
+    /** Result of a finished recording (used by both /chunkvault stop and the map's stop button). */
+    public record StopResult(int chunks, int chests, int entities, Path dir) {}
+
+    /** Stops the running recording and writes the world out. Returns null if nothing was recording. */
+    public static StopResult stopRecording() {
         if (!RecordingState.get().isActive()) {
-            source.sendFeedback(Component.literal("§c[ChunkVault] Запись не активна."));
-            return 0;
+            return null;
         }
         var manager = RecordingState.get().saveManager();
         var player = Minecraft.getInstance().player;
@@ -214,9 +217,18 @@ public class ChunkVaultClient implements ClientModInitializer {
         }
 
         Path dir = RecordingState.get().stop(spawnPos, uuid, playerTag);
+        return new StopResult(chunks, chests, entities, dir);
+    }
+
+    private int stop(FabricClientCommandSource source) {
+        StopResult result = stopRecording();
+        if (result == null) {
+            source.sendFeedback(Component.literal("§c[ChunkVault] Запись не активна."));
+            return 0;
+        }
         source.sendFeedback(Component.literal(
-                "§a[ChunkVault] Готово: " + chunks + " чанков, " + chests + " контейнеров, "
-                + entities + " сущностей. Сохранено в: " + dir));
+                "§a[ChunkVault] Готово: " + result.chunks() + " чанков, " + result.chests() + " контейнеров, "
+                + result.entities() + " сущностей. Сохранено в: " + result.dir()));
         source.sendFeedback(Component.literal(
                 "§b[ChunkVault] При заходе в этот мир ты должен оказаться там же, где остановил запись."));
         return 1;
