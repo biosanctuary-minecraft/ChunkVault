@@ -6,6 +6,7 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtIo;
 import net.minecraft.nbt.StringTag;
+import com.chunkvault.state.ChunkVaultSettings;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -71,6 +72,15 @@ public final class LevelDatWriter {
             if (playerTag != null) {
                 data.put("Player", playerTag);
             }
+            // Applied regardless of where the level.dat came from (built
+            // from scratch or copied from a template), so the mob-spawning
+            // setting always takes effect. GameRules stores each rule as a
+            // plain string "true"/"false", a format stable since 1.13.
+            CompoundTag gameRules = data.getCompound("GameRules").orElseGet(CompoundTag::new);
+            gameRules.putString("doMobSpawning",
+                    ChunkVaultSettings.get().preventMobSpawning() ? "false" : "true");
+            data.put("GameRules", gameRules);
+
             data.putLong("LastPlayed", System.currentTimeMillis());
             root.put("Data", data);
 
