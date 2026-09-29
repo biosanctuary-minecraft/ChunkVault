@@ -21,6 +21,7 @@ public class ChunkVaultClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            com.chunkvault.state.AutoRecord.tick();
             if (openMapNextTick) {
                 openMapNextTick = false;
                 Minecraft.getInstance().setScreenAndShow(new com.chunkvault.gui.MapScreen());
