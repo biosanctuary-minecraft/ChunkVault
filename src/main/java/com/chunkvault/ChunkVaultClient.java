@@ -115,22 +115,33 @@ public class ChunkVaultClient implements ClientModInitializer {
         return 1;
     }
 
-    private int start(FabricClientCommandSource source, String name) {
+    /**
+     * Starts a recording (shared by /chunkvault start and the map's record button).
+     * @return number of already-loaded chunks captured immediately, or -1 if a recording is already running
+     */
+    public static int startRecording(String name) {
         Path gameDir = FabricLoader.getInstance().getGameDir();
         boolean started = RecordingState.get().start(gameDir, name);
-        if (started) {
-            var level = Minecraft.getInstance().level;
-            if (level != null) {
-                try {
-                    var worldGen = com.chunkvault.save.VoidWorldGenBuilder.build(level);
-                    com.chunkvault.save.VoidWorldGenBuilder.writeToWorld(
-                            RecordingState.get().saveManager().rootDir(), worldGen);
-                } catch (Exception e) {
-                    System.err.println("[ChunkVault] could not build void world-gen settings, " +
-                            "will fall back to copying from an existing world at stop time: " + e);
-                }
+        if (!started) {
+            return -1;
+        }
+        var level = Minecraft.getInstance().level;
+        if (level != null) {
+            try {
+                var worldGen = com.chunkvault.save.VoidWorldGenBuilder.build(level);
+                com.chunkvault.save.VoidWorldGenBuilder.writeToWorld(
+                        RecordingState.get().saveManager().rootDir(), worldGen);
+            } catch (Exception e) {
+                System.err.println("[ChunkVault] could not build void world-gen settings, " +
+                        "will fall back to copying from an existing world at stop time: " + e);
             }
-            int snapshotted = snapshotAlreadyLoadedChunks();
+        }
+        return snapshotAlreadyLoadedChunks();
+    }
+
+    private int start(FabricClientCommandSource source, String name) {
+        int snapshotted = startRecording(name);
+        if (snapshotted >= 0) {
             source.sendFeedback(Component.literal(
                     "§a[ChunkVault] Запись начата: " + name +
                     " — ходите по миру и открывайте сундуки, всё будет сохраняться. " +
@@ -154,7 +165,7 @@ public class ChunkVaultClient implements ClientModInitializer {
      * loaded within render distance and saves it immediately, on top of
      * whatever new packets arrive from here on.
      */
-    private int snapshotAlreadyLoadedChunks() {
+    private static int snapshotAlreadyLoadedChunks() {
         var level = Minecraft.getInstance().level;
         var player = Minecraft.getInstance().player;
         var manager = RecordingState.get().saveManager();
