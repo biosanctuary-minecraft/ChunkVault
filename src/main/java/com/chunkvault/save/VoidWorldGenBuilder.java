@@ -88,7 +88,7 @@ public final class VoidWorldGenBuilder {
         HolderLookup.Provider registries = level.registryAccess();
         HolderLookup.RegistryLookup<WorldPreset> presets = registries.lookupOrThrow(Registries.WORLD_PRESET);
         Holder<WorldPreset> normal = presets.getOrThrow(WorldPresets.NORMAL);
-        WorldDimensions dimensions = normal.value().dimensions();
+        WorldDimensions dimensions = normal.value().createWorldDimensions();
         return encode(registries, dimensions, seed, true);
     }
 
