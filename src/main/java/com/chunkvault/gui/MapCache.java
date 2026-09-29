@@ -76,13 +76,19 @@ public final class MapCache {
         return REGION_KEYS.computeIfAbsent(dimensionId, k -> ConcurrentHashMap.newKeySet());
     }
 
-    /** Bumped when recording starts/stops so the map textures re-tint the recorded chunks. */
+    /** Bumped when recording starts/stops so the map textures get rebuilt from scratch. */
     public static int tintVersion() {
         return tintVersion;
     }
 
     public static void bumpTint() {
         tintVersion++;
+    }
+
+    /** Tells the map textures that this chunk's on-screen state changed (e.g. it just got recorded). */
+    public static void markDirty(String dimensionId, int cx, int cz) {
+        dirtyChunks(dimensionId).add(key(cx, cz));
+        regionKeys(dimensionId).add(key(cx >> 4, cz >> 4));
     }
 
     public static long key(int cx, int cz) {
