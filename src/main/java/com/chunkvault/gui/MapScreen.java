@@ -7,13 +7,19 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.level.chunk.LevelChunk;
 
 /**
  * Top-down world map.
  *
- * Rendering notes (why it is both sharper and cheaper than before):
+ * Rendering: terrain is drawn from GPU region textures (MapTextures) — a few
+ * blit() calls per frame no matter how far out you zoom, and every block
+ * stays visible. If textures are unavailable it falls back to the older
+ * fill()-based renderer below.
+ *
+ * Other notes (why it is both sharper and cheaper than before):
  *  - the map is drawn in real DEVICE pixels (the GUI matrix is scaled by
  *    1/guiScale for the map layer), so terrain is no longer snapped to the
  *    coarse GUI-pixel grid — 2-4x finer at typical GUI scales, and the
@@ -119,7 +125,10 @@ public class MapScreen extends Screen {
         double ppcDev = ppc * dev;   // device pixels per chunk
         var manager = RecordingState.get().saveManager();
 
-        // ---- collect the chunks on screen ----
+        // ---- which renderer: GPU textures (fast) or the fill() fallback ----
+        MapTextures.beginFrame(frame, dimensionId, cache);
+        boolean useTex = MapTextures.available();
+
         double halfW = (mapW / 2.0) / scale;
         double halfH = (mapH / 2.0) / scale;
         int minCx = (int) Math.floor((centerX - halfW) / 16.0);
@@ -127,49 +136,57 @@ public class MapScreen extends Screen {
         int minCz = (int) Math.floor((centerZ - halfH) / 16.0);
         int maxCz = (int) Math.floor((centerZ + halfH) / 16.0);
         visCount = 0;
-        long area = (long) (maxCx - minCx + 1) * (long) (maxCz - minCz + 1);
-        if (area <= cache.size() * 2L) {
-            for (int cz = minCz; cz <= maxCz; cz++) {
-                for (int cx = minCx; cx <= maxCx; cx++) {
-                    MapCache.ChunkColors c = cache.get(MapCache.key(cx, cz));
-                    if (c != null) {
-                        addVisible(cx, cz, c);
+        int detail = 1;
+
+        if (!useTex) {
+            // ---- fallback: collect the chunks on screen ----
+            long area = (long) (maxCx - minCx + 1) * (long) (maxCz - minCz + 1);
+            if (area <= cache.size() * 2L) {
+                for (int cz = minCz; cz <= maxCz; cz++) {
+                    for (int cx = minCx; cx <= maxCx; cx++) {
+                        MapCache.ChunkColors c = cache.get(MapCache.key(cx, cz));
+                        if (c != null) {
+                            addVisible(cx, cz, c);
+                        }
+                    }
+                }
+            } else {
+                for (var entry : cache.entrySet()) {
+                    int cx = MapCache.keyX(entry.getKey());
+                    int cz = MapCache.keyZ(entry.getKey());
+                    if (cx >= minCx && cx <= maxCx && cz >= minCz && cz <= maxCz) {
+                        addVisible(cx, cz, entry.getValue());
                     }
                 }
             }
-        } else {
-            for (var entry : cache.entrySet()) {
-                int cx = MapCache.keyX(entry.getKey());
-                int cz = MapCache.keyZ(entry.getKey());
-                if (cx >= minCx && cx <= maxCx && cz >= minCz && cz <= maxCz) {
-                    addVisible(cx, cz, entry.getValue());
-                }
-            }
-        }
 
-        // ---- pick the finest detail level that fits the fill() budget ----
-        long[] totals = new long[4]; // 16x16, 8x8, 4x4, 2x2
-        for (int i = 0; i < visCount; i++) {
-            MapCache.ChunkColors c = visCol[i];
-            totals[0] += c.m16.count;
-            totals[1] += c.m8.count;
-            totals[2] += c.m4.count;
-            totals[3] += c.m2.count;
-        }
-        int detail = 1;
-        int[] levels = {16, 8, 4, 2};
-        for (int i = 0; i < levels.length; i++) {
-            // a cell narrower than one device pixel can't be seen anyway
-            if (ppcDev / levels[i] >= 1.0 && totals[i] <= RECT_BUDGET) {
-                detail = levels[i];
-                break;
+            // pick the finest detail level that fits the fill() budget
+            long[] totals = new long[4]; // 16x16, 8x8, 4x4, 2x2
+            for (int i = 0; i < visCount; i++) {
+                MapCache.ChunkColors c = visCol[i];
+                totals[0] += c.m16.count;
+                totals[1] += c.m8.count;
+                totals[2] += c.m4.count;
+                totals[3] += c.m2.count;
+            }
+            int[] levels = {16, 8, 4, 2};
+            for (int i = 0; i < levels.length; i++) {
+                if (ppcDev / levels[i] >= 1.0 && totals[i] <= RECT_BUDGET) {
+                    detail = levels[i];
+                    break;
+                }
             }
         }
 
         // ================= map layer, drawn in device pixels =================
+        g.enableScissor(mapX0, mapY0, mapX1, mapY1);
         float inv = (float) (1.0 / dev);
         g.pose().pushMatrix();
         g.pose().scale(inv, inv);
+
+        if (useTex) {
+            drawTerrainTextured(g, dimensionId, cache, mapCX, mapCY, minCx, maxCx, minCz, maxCz);
+        }
 
         for (int i = 0; i < visCount; i++) {
             int cx = visCx[i];
@@ -199,7 +216,7 @@ public class MapScreen extends Screen {
         }
 
         // chunks already saved by the recording get a faint green tint
-        if (manager != null && visCount <= 2500) {
+        if (!useTex && manager != null && visCount <= 2500) {
             for (int i = 0; i < visCount; i++) {
                 if (manager.isRecorded(dimensionId, visCx[i], visCz[i])) {
                     double sx = (mapCX + (visCx[i] * 16.0 - centerX) * scale) * dev;
@@ -246,6 +263,7 @@ public class MapScreen extends Screen {
         drawArrow(g, pcx, pcy, -Math.sin(yaw), Math.cos(yaw), 3.2 * dev + 5.0);
 
         g.pose().popMatrix();
+        g.disableScissor();
         // ================= end of device-pixel layer =================
 
         // ---- bars with text ----
@@ -306,6 +324,43 @@ public class MapScreen extends Screen {
             int tx0 = (this.width - tw) / 2;
             g.fill(tx0, TOP_BAR + 6, tx0 + tw, TOP_BAR + 24, 0xE0101015);
             g.text(this.font, toast, tx0 + 8, TOP_BAR + 11, 0xFF70FF90, true);
+        }
+    }
+
+    /** Draws the terrain as region textures: one blit() per 16x16-chunk region on screen. */
+    private void drawTerrainTextured(GuiGraphicsExtractor g, String dimensionId,
+                                     java.util.Map<Long, MapCache.ChunkColors> cache,
+                                     double mapCX, double mapCY, int minCx, int maxCx, int minCz, int maxCz) {
+        // zoomed far out, the coarse texture (1 px per 4 blocks) stays sharp instead of shimmering
+        int lodIdx = scale * dev >= 0.6 ? 0 : 1;
+        int size = MapTextures.SIZE[lodIdx];
+        var regionKeys = MapCache.regionKeys(dimensionId);
+        int rMinX = minCx >> 4;
+        int rMaxX = maxCx >> 4;
+        int rMinZ = minCz >> 4;
+        int rMaxZ = maxCz >> 4;
+        for (int rz = rMinZ; rz <= rMaxZ; rz++) {
+            int y0 = (int) Math.round((mapCY + (rz * 256.0 - centerZ) * scale) * dev);
+            int y1 = (int) Math.round((mapCY + ((rz + 1) * 256.0 - centerZ) * scale) * dev);
+            if (y1 <= y0) {
+                continue;
+            }
+            for (int rx = rMinX; rx <= rMaxX; rx++) {
+                if (!regionKeys.contains(MapCache.key(rx, rz))) {
+                    continue;
+                }
+                MapTextures.Lod lod = MapTextures.acquire(dimensionId, rx, rz, lodIdx, cache, frame);
+                if (lod == null) {
+                    continue;
+                }
+                int x0 = (int) Math.round((mapCX + (rx * 256.0 - centerX) * scale) * dev);
+                int x1 = (int) Math.round((mapCX + ((rx + 1) * 256.0 - centerX) * scale) * dev);
+                if (x1 <= x0) {
+                    continue;
+                }
+                g.blit(RenderPipelines.GUI_TEXTURED, lod.id, x0, y0, 0, 0, x1 - x0, y1 - y0,
+                        size, size, size, size);
+            }
         }
     }
 
