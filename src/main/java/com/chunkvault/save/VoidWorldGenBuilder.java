@@ -20,6 +20,9 @@ import net.minecraft.world.level.dimension.LevelStem;
 import net.minecraft.world.level.levelgen.WorldDimensions;
 import net.minecraft.world.level.levelgen.FlatLevelSource;
 import net.minecraft.world.level.levelgen.flat.FlatLevelGeneratorSettings;
+import net.minecraft.world.level.levelgen.presets.WorldPreset;
+import net.minecraft.world.level.levelgen.presets.WorldPresets;
+import com.chunkvault.state.ChunkVaultSettings;
 
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -52,7 +55,44 @@ import java.util.zip.GZIPOutputStream;
  */
 public final class VoidWorldGenBuilder {
 
+    /** Reads the current ChunkVaultSettings (void vs. seeded) and builds accordingly. */
     public static CompoundTag build(ClientLevel level) {
+        ChunkVaultSettings settings = ChunkVaultSettings.get();
+        if (settings.useSeed()) {
+            try {
+                return buildSeeded(level, settings.seed());
+            } catch (Throwable e) {
+                System.err.println("[ChunkVault] seeded world-gen build failed, falling back to void: " + e);
+            }
+        }
+        return buildVoid(level, 0L);
+    }
+
+    /**
+     * Attempts to reuse the game's own default "Normal" world preset
+     * (real Overworld/Nether/End terrain) with the given seed, instead of
+     * building a noise-based generator by hand — that would mean
+     * reconstructing NoiseBasedChunkGenerator/NoiseGeneratorSettings/
+     * MultiNoiseBiomeSource from scratch, which is far deeper, far less
+     * documented API than anything else in this mod and very likely to need
+     * several more rounds of guessing. Looking up WorldPresets.NORMAL from
+     * the registry instead means the actual generator setup comes from real
+     * game data — IF that registry is even populated on a remote
+     * connection's synced RegistryAccess, which is the real uncertainty
+     * here (world presets are normally a "Create World" screen concept, not
+     * a gameplay registry servers sync to clients). Hence the try/catch in
+     * build(): any failure here just falls back to Void rather than
+     * breaking the mod.
+     */
+    private static CompoundTag buildSeeded(ClientLevel level, long seed) throws Exception {
+        HolderLookup.Provider registries = level.registryAccess();
+        HolderLookup.RegistryLookup<WorldPreset> presets = registries.lookupOrThrow(Registries.WORLD_PRESET);
+        Holder<WorldPreset> normal = presets.getOrThrow(WorldPresets.NORMAL);
+        WorldDimensions dimensions = normal.value().dimensions();
+        return encode(registries, dimensions, seed, true);
+    }
+
+    private static CompoundTag buildVoid(ClientLevel level, long seed) {
         HolderLookup.Provider registries = level.registryAccess();
 
         HolderLookup.RegistryLookup<Biome> biomes = registries.lookupOrThrow(Registries.BIOME);
@@ -70,7 +110,11 @@ public final class VoidWorldGenBuilder {
         stems.put(LevelStem.END, new LevelStem(dimensionTypes.getOrThrow(BuiltinDimensionTypes.END), generator));
 
         WorldDimensions dimensions = new WorldDimensions(stems);
+        return encode(registries, dimensions, seed, false);
+    }
 
+    private static CompoundTag encode(HolderLookup.Provider registries, WorldDimensions dimensions,
+                                       long seed, boolean generateFeatures) {
         RegistryOps<Tag> ops = RegistryOps.create(NbtOps.INSTANCE, registries);
         // Using result()/orElseThrow rather than DataResult.getOrThrow(...):
         // the latter's signature has changed across DFU versions, result()
@@ -99,8 +143,8 @@ public final class VoidWorldGenBuilder {
             inner = new CompoundTag();
             inner.put("dimensions", tag);
         }
-        inner.putLong("seed", 0L);
-        inner.putBoolean("generate_features", false);
+        inner.putLong("seed", seed);
+        inner.putBoolean("generate_features", generateFeatures);
         inner.putBoolean("bonus_chest", false);
 
         CompoundTag root = new CompoundTag();
