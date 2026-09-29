@@ -136,7 +136,9 @@ public class ChunkVaultClient implements ClientModInitializer {
                         "will fall back to copying from an existing world at stop time: " + e);
             }
         }
-        return snapshotAlreadyLoadedChunks();
+        int captured = snapshotAlreadyLoadedChunks();
+        com.chunkvault.gui.MapCache.bumpTint();
+        return captured;
     }
 
     private int start(FabricClientCommandSource source, String name) {
@@ -228,6 +230,7 @@ public class ChunkVaultClient implements ClientModInitializer {
         }
 
         Path dir = RecordingState.get().stop(spawnPos, uuid, playerTag);
+        com.chunkvault.gui.MapCache.bumpTint();
         return new StopResult(chunks, chests, entities, dir);
     }
 
