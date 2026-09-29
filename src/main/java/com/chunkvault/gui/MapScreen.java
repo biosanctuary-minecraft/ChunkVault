@@ -29,12 +29,13 @@ import net.minecraft.world.level.chunk.LevelChunk;
 public class MapScreen extends Screen {
 
     private static final int TOP_BAR = 22;
-    private static final int BOTTOM_BAR = 34;
+    private static final int BOTTOM_BAR = 18;
     private static final double MIN_SCALE = 0.125; // GUI pixels per block
     private static final double MAX_SCALE = 16.0;
     /** Upper bound of fill() draw calls per frame — each one is a real GPU draw, not just a rectangle.
-     * The previous, much higher budget is what caused the slideshow-level lag when the map first opened. */
-    private static final int FILL_BUDGET = 4000;
+     * Counted from the REAL number of same-colour runs per chunk (MapCache.ChunkColors.runsN), not a
+     * worst case, so far more detail fits into the same budget. Lower it if the map ever lags. */
+    private static final int FILL_BUDGET = 7000;
 
     private static double lastScale = 1.0;
 
@@ -42,6 +43,15 @@ public class MapScreen extends Screen {
     private double centerZ;
     private double scale = lastScale;
     private int refreshCursor;
+
+    // stop-recording button (drawn by hand, hit-tested in mouseClicked)
+    private int btnX0;
+    private int btnY0;
+    private int btnX1;
+    private int btnY1;
+    private boolean btnEnabled;
+    private String toast;
+    private long toastUntil;
 
     public MapScreen() {
         super(Component.literal("ChunkVault — карта"));
@@ -88,26 +98,31 @@ public class MapScreen extends Screen {
         double ppc = scale * 16.0; // pixels per chunk
         var manager = RecordingState.get().saveManager();
 
-        // ---- pass 1: how many chunks are on screen -> pick the detail level ----
-        int visible = 0;
-        for (long key : cache.keySet()) {
+        // ---- pass 1: real fill() cost per detail level of what is on screen -> pick the detail ----
+        long[] totals = new long[4]; // 16x16, 8x8, 4x4, 2x2
+        for (var entry : cache.entrySet()) {
+            long key = entry.getKey();
             double sx = mapCX + (MapCache.keyX(key) * 16.0 - centerX) * scale;
             double sy = mapCY + (MapCache.keyZ(key) * 16.0 - centerZ) * scale;
             if (!(sx + ppc < mapX0 || sx > mapX1 || sy + ppc < mapY0 || sy > mapY1)) {
-                visible++;
+                MapCache.ChunkColors c = entry.getValue();
+                totals[0] += c.runs16;
+                totals[1] += c.runs8;
+                totals[2] += c.runs4;
+                totals[3] += c.runs2;
             }
         }
         int detail = 1;
-        for (int candidate : new int[]{16, 8, 4, 2}) {
-            // Skip detail levels whose cells would be under 2 device pixels wide — invisible, pure GPU waste.
-            if (ppc / candidate >= 2.0 && (long) visible * candidate * candidate <= FILL_BUDGET) {
-                detail = candidate;
+        int[] levels = {16, 8, 4, 2};
+        for (int i = 0; i < levels.length; i++) {
+            // A cell narrower than one GUI pixel can't be drawn anyway.
+            if (ppc / levels[i] >= 1.0 && totals[i] <= FILL_BUDGET) {
+                detail = levels[i];
                 break;
             }
         }
 
         // ---- pass 2: draw ----
-        int recordedInView = 0;
         for (var entry : cache.entrySet()) {
             long key = entry.getKey();
             int cx = MapCache.keyX(key);
@@ -150,7 +165,6 @@ public class MapScreen extends Screen {
             }
 
             if (manager != null && manager.isRecorded(dimensionId, cx, cz)) {
-                recordedInView++;
                 fillClipped(g, sx, sy, sx + ppc, sy + ppc, 0x2600FF66, mapX0, mapY0, mapX1, mapY1);
             }
         }
@@ -173,11 +187,29 @@ public class MapScreen extends Screen {
             }
         }
 
-        // ---- player marker ----
+        // ---- hovered chunk highlight (like Xaero's) ----
+        if (inMap) {
+            int hbx = (int) Math.floor(centerX + (mouseX - mapCX) / scale);
+            int hbz = (int) Math.floor(centerZ + (mouseY - mapCY) / scale);
+            double hx = mapCX + ((hbx >> 4) * 16.0 - centerX) * scale;
+            double hy = mapCY + ((hbz >> 4) * 16.0 - centerZ) * scale;
+            fillClipped(g, hx, hy, hx + ppc, hy + ppc, 0x33FFFFFF, mapX0, mapY0, mapX1, mapY1);
+            int bw = 1;
+            fillClipped(g, hx, hy, hx + ppc, hy + bw, 0xCCFFFFFF, mapX0, mapY0, mapX1, mapY1);
+            fillClipped(g, hx, hy + ppc - bw, hx + ppc, hy + ppc, 0xCCFFFFFF, mapX0, mapY0, mapX1, mapY1);
+            fillClipped(g, hx, hy, hx + bw, hy + ppc, 0xCCFFFFFF, mapX0, mapY0, mapX1, mapY1);
+            fillClipped(g, hx + ppc - bw, hy, hx + ppc, hy + ppc, 0xCCFFFFFF, mapX0, mapY0, mapX1, mapY1);
+        }
+
+        // ---- player marker: an arrow pointing where the player looks ----
         double playerSX = mapCX + (player.getX() - centerX) * scale;
         double playerSY = mapCY + (player.getZ() - centerZ) * scale;
-        fillClipped(g, playerSX - 3, playerSY - 3, playerSX + 3, playerSY + 3, 0xFFFFFFFF, mapX0, mapY0, mapX1, mapY1);
-        fillClipped(g, playerSX - 2, playerSY - 2, playerSX + 2, playerSY + 2, 0xFFFF3030, mapX0, mapY0, mapX1, mapY1);
+        double yaw = Math.toRadians(player.getYRot());
+        // Minecraft yaw 0 = south (+Z, screen down), 90 = west (-X, screen left)
+        double fx = -Math.sin(yaw);
+        double fy = Math.cos(yaw);
+        drawArrow(g, playerSX, playerSY, fx, fy, 1.4, 0xFF101015, mapX0, mapY0, mapX1, mapY1);
+        drawArrow(g, playerSX, playerSY, fx, fy, 1.0, 0xFFFFFFFF, mapX0, mapY0, mapX1, mapY1);
 
         // ---- bars with text ----
         g.fill(0, 0, this.width, TOP_BAR, 0xFF1A1A22);
@@ -191,7 +223,7 @@ public class MapScreen extends Screen {
         String last = RecordingState.get().lastSessionName();
         String nameText;
         int nameColor;
-        if (active != null) {
+        if (active != null && manager != null) {
             nameText = "Карта: " + active + "  ● ЗАПИСЬ  чанков: " + manager.chunksSaved()
                     + "  сущностей: " + manager.entitiesSeen();
             nameColor = 0xFFFF7070;
@@ -204,28 +236,84 @@ public class MapScreen extends Screen {
         }
         g.text(this.font, nameText, x, 7, nameColor, true);
 
+        // ---- ЗАПИСЬ СТОП button (active only while a recording runs) ----
+        String btnText = "ЗАПИСЬ СТОП";
+        btnEnabled = RecordingState.get().isActive();
+        btnX0 = x + this.font.width(nameText) + 10;
+        btnX1 = btnX0 + this.font.width(btnText) + 14;
+        btnY0 = 3;
+        btnY1 = TOP_BAR - 3;
+        boolean btnHover = btnEnabled && mouseX >= btnX0 && mouseX < btnX1 && mouseY >= btnY0 && mouseY < btnY1;
+        int btnBg = !btnEnabled ? 0xFF2A2A32 : btnHover ? 0xFFD03A3A : 0xFF9E2A2A;
+        g.fill(btnX0, btnY0, btnX1, btnY1, btnEnabled ? 0xFFFFFFFF : 0xFF3A3A44);
+        g.fill(btnX0 + 1, btnY0 + 1, btnX1 - 1, btnY1 - 1, btnBg);
+        g.text(this.font, btnText, btnX0 + 7, 7, btnEnabled ? 0xFFFFFFFF : 0xFF77777F, true);
+
         String dimText = dimensionId;
         g.text(this.font, dimText, this.width - this.font.width(dimText) - 8, 7, 0xFFCCCCCC, true);
 
-        String cursorText = "";
+        // ---- bottom bar: only coordinates and chunks ----
+        String info = "Ты: X: " + (int) Math.floor(player.getX())
+                + "  Y: " + (int) Math.floor(player.getY())
+                + "  Z: " + (int) Math.floor(player.getZ()) + "  |";
         if (inMap) {
             int bx = (int) Math.floor(centerX + (mouseX - mapCX) / scale);
             int bz = (int) Math.floor(centerZ + (mouseY - mapCY) / scale);
-            cursorText = "Курсор: X " + bx + "  Z " + bz + "   чанк " + (bx >> 4) + ", " + (bz >> 4);
-            if (manager != null && manager.isRecorded(dimensionId, bx >> 4, bz >> 4)) {
-                cursorText += "   [записан]";
+            info += "  Курсор: X: " + bx + "  Z: " + bz + "  Чанк: " + (bx >> 4) + ", " + (bz >> 4) + "  |";
+        }
+        g.text(this.font, info, 8, this.height - BOTTOM_BAR + 5, 0xFFFFFFFF, true);
+
+        // ---- short result message after pressing the button ----
+        if (toast != null && System.currentTimeMillis() < toastUntil) {
+            int tw = this.font.width(toast) + 16;
+            int tx0 = (this.width - tw) / 2;
+            g.fill(tx0, TOP_BAR + 6, tx0 + tw, TOP_BAR + 24, 0xE0101015);
+            g.text(this.font, toast, tx0 + 8, TOP_BAR + 11, 0xFF70FF90, true);
+        }
+    }
+
+    /**
+     * Draws the player arrow with fill() only: the arrow polygon (tip, two
+     * back corners, notch) is rotated to the player's facing and rasterised
+     * row by row into horizontal runs. {@code grow} scales it (used for the outline).
+     */
+    private static void drawArrow(GuiGraphicsExtractor g, double cx, double cy, double fx, double fy,
+                                  double grow, int color, int minX, int minY, int maxX, int maxY) {
+        double len = 8.0 * grow;
+        double wid = 6.0 * grow;
+        int r = (int) Math.ceil(len) + 2;
+        int icx = (int) Math.floor(cx);
+        int icy = (int) Math.floor(cy);
+        for (int iy = icy - r; iy <= icy + r; iy++) {
+            int runStart = Integer.MIN_VALUE;
+            for (int ix = icx - r; ix <= icx + r + 1; ix++) {
+                boolean in = false;
+                if (ix <= icx + r) {
+                    double px = ix + 0.5 - cx;
+                    double py = iy + 0.5 - cy;
+                    double u = px * fx + py * fy;   // along the facing direction
+                    double v = -px * fy + py * fx;  // sideways
+                    in = inTri(u, v, len, 0, -0.8 * len, wid, -0.3 * len, 0)
+                            || inTri(u, v, len, 0, -0.3 * len, 0, -0.8 * len, -wid);
+                }
+                if (in && runStart == Integer.MIN_VALUE) {
+                    runStart = ix;
+                } else if (!in && runStart != Integer.MIN_VALUE) {
+                    fillClipped(g, runStart, iy, ix, iy + 1, color, minX, minY, maxX, maxY);
+                    runStart = Integer.MIN_VALUE;
+                }
             }
         }
-        String playerText = "Ты: X " + (int) Math.floor(player.getX())
-                + "  Y " + (int) Math.floor(player.getY())
-                + "  Z " + (int) Math.floor(player.getZ());
-        int bottomY = this.height - BOTTOM_BAR;
-        g.text(this.font, playerText, 8, bottomY + 5, 0xFFFF9090, true);
-        g.text(this.font, cursorText, 8 + this.font.width(playerText) + 24, bottomY + 5, 0xFFFFFFFF, true);
-        String help = "ЛКМ-тащить — двигать   Колесо — масштаб   ПКМ — к игроку   Esc — закрыть   |   "
-                + String.format("%.2f", scale) + " пикс/блок   детализация " + detail + "x" + detail
-                + (manager != null ? "   записано в кадре: " + recordedInView : "");
-        g.text(this.font, help, 8, bottomY + 19, 0xFF9A9AA5, true);
+    }
+
+    private static boolean inTri(double px, double py, double ax, double ay, double bx, double by,
+                                 double cx, double cy) {
+        double d1 = (px - bx) * (ay - by) - (ax - bx) * (py - by);
+        double d2 = (px - cx) * (by - cy) - (bx - cx) * (py - cy);
+        double d3 = (px - ax) * (cy - ay) - (cx - ax) * (py - ay);
+        boolean neg = d1 < 0 || d2 < 0 || d3 < 0;
+        boolean pos = d1 > 0 || d2 > 0 || d3 > 0;
+        return !(neg && pos);
     }
 
     // ------------------------------------------------------------------
@@ -234,6 +322,16 @@ public class MapScreen extends Screen {
 
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean isDoubleClick) {
+        if (event.button() == InputConstants.MOUSE_BUTTON_LEFT && btnEnabled
+                && event.x() >= btnX0 && event.x() < btnX1 && event.y() >= btnY0 && event.y() < btnY1) {
+            var result = com.chunkvault.ChunkVaultClient.stopRecording();
+            if (result != null) {
+                toast = "Запись остановлена: " + result.chunks() + " чанков, "
+                        + result.chests() + " контейнеров, " + result.entities() + " сущностей";
+                toastUntil = System.currentTimeMillis() + 6000;
+            }
+            return true;
+        }
         if (event.button() == InputConstants.MOUSE_BUTTON_RIGHT) {
             recenterOnPlayer();
             return true;
