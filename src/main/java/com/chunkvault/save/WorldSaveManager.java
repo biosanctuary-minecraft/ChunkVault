@@ -1,5 +1,6 @@
 package com.chunkvault.save;
 
+import com.chunkvault.state.ChunkVaultSettings;
 import net.minecraft.SharedConstants;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
@@ -181,6 +182,9 @@ public final class WorldSaveManager {
      * Called about once a second while recording and once more at stop.
      */
     public synchronized void snapshotEntities(ClientLevel level) {
+        if (!ChunkVaultSettings.get().saveEntities()) {
+            return;
+        }
         String dimensionId = level.dimension().identifier().toString();
         String entitiesFolder = regionFolderFor(level).replaceAll("region$", "entities");
         for (Entity entity : level.entitiesForRendering()) {
