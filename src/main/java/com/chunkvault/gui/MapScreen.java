@@ -69,6 +69,8 @@ public class MapScreen extends Screen {
     private int btnY0;
     private int btnX1;
     private int btnY1;
+    private int expX0;
+    private int expX1;
     private int setX0;
     private int setX1;
     private String toast;
@@ -332,9 +334,18 @@ public class MapScreen extends Screen {
         g.fill(btnX0 + 1, btnY0 + 1, btnX1 - 1, btnY1 - 1, btnBg);
         g.text(this.font, btnText, btnX0 + 7, 7, 0xFFFFFFFF, true);
 
+        // ---- ПРОВОДНИК button: same look, yellow ----
+        String expText = "ПРОВОДНИК";
+        expX0 = btnX1 + 6;
+        expX1 = expX0 + this.font.width(expText) + 14;
+        boolean expHover = mouseX >= expX0 && mouseX < expX1 && mouseY >= btnY0 && mouseY < btnY1;
+        g.fill(expX0, btnY0, expX1, btnY1, 0xFFFFFFFF);
+        g.fill(expX0 + 1, btnY0 + 1, expX1 - 1, btnY1 - 1, expHover ? 0xFFD9AE2C : 0xFFB8901A);
+        g.text(this.font, expText, expX0 + 7, 7, 0xFFFFFFFF, true);
+
         // ---- НАСТРОЙКИ button: same look, blue-grey ----
         String setText = "НАСТРОЙКИ";
-        setX0 = btnX1 + 6;
+        setX0 = expX1 + 6;
         setX1 = setX0 + this.font.width(setText) + 14;
         boolean setHover = mouseX >= setX0 && mouseX < setX1 && mouseY >= btnY0 && mouseY < btnY1;
         g.fill(setX0, btnY0, setX1, btnY1, 0xFFFFFFFF);
@@ -571,6 +582,11 @@ public class MapScreen extends Screen {
         if (event.button() == InputConstants.MOUSE_BUTTON_LEFT
                 && event.x() >= btnX0 && event.x() < btnX1 && event.y() >= btnY0 && event.y() < btnY1) {
             toggleRecording();
+            return true;
+        }
+        if (event.button() == InputConstants.MOUSE_BUTTON_LEFT
+                && event.x() >= expX0 && event.x() < expX1 && event.y() >= btnY0 && event.y() < btnY1) {
+            Minecraft.getInstance().setScreenAndShow(new ExplorerScreen(this));
             return true;
         }
         if (event.button() == InputConstants.MOUSE_BUTTON_LEFT
