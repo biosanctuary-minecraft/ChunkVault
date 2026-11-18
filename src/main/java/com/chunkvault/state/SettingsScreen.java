@@ -1,5 +1,6 @@
 package com.chunkvault.gui;
 
+import com.chunkvault.Lang;
 import com.chunkvault.state.AutoRecord;
 import com.chunkvault.state.ChunkVaultSettings;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -31,7 +32,7 @@ public class SettingsScreen extends Screen {
 
     /** @param parent screen to go back to when closed (null = back to the game) */
     public SettingsScreen(Screen parent) {
-        super(Component.literal("ChunkVault — настройки"));
+        super(Lang.c("settings.title"));
         this.parent = parent;
     }
 
@@ -72,13 +73,13 @@ public class SettingsScreen extends Screen {
         this.addRenderableWidget(genModeButton(x, y, s));
         y += ROW_H;
 
-        seedBox = new EditBox(this.font, x + 140, y, WIDTH - 140, 20, Component.literal("Сид"));
+        seedBox = new EditBox(this.font, x + 140, y, WIDTH - 140, 20, Lang.c("settings.seed_box"));
         seedBox.setValue(Long.toString(s.seed()));
         seedBox.setMaxLength(20);
         this.addRenderableWidget(seedBox);
         y += ROW_H + 10;
 
-        this.addRenderableWidget(Button.builder(Component.literal("Готово"), b -> {
+        this.addRenderableWidget(Button.builder(Lang.c("common.done"), b -> {
                     applySeed();
                     this.onClose();
                 })
@@ -87,7 +88,7 @@ public class SettingsScreen extends Screen {
     }
 
     private Component autoLabel() {
-        return Component.literal("Автозапись на этом сервере: " + (AutoRecord.isAuto(serverKey) ? "ВКЛ" : "ВЫКЛ"));
+        return Lang.c("settings.auto", Lang.s(AutoRecord.isAuto(serverKey) ? "common.on" : "common.off"));
     }
 
     private Button entitiesButton(int x, int y, ChunkVaultSettings s) {
@@ -100,7 +101,7 @@ public class SettingsScreen extends Screen {
     }
 
     private static Component entitiesLabel(ChunkVaultSettings s) {
-        return Component.literal("Сохранять мобов/предметы: " + (s.saveEntities() ? "ВКЛ" : "ВЫКЛ"));
+        return Lang.c("settings.entities", Lang.s(s.saveEntities() ? "common.on" : "common.off"));
     }
 
     private Button mobsButton(int x, int y, ChunkVaultSettings s) {
@@ -113,7 +114,7 @@ public class SettingsScreen extends Screen {
     }
 
     private static Component mobsLabel(ChunkVaultSettings s) {
-        return Component.literal("Спавн мобов в сохранённом мире: " + (s.preventMobSpawning() ? "ЗАПРЕЩЁН" : "разрешён"));
+        return Lang.c("settings.mobs", Lang.s(s.preventMobSpawning() ? "settings.mobs.blocked" : "settings.mobs.allowed"));
     }
 
     private Button genModeButton(int x, int y, ChunkVaultSettings s) {
@@ -126,7 +127,7 @@ public class SettingsScreen extends Screen {
     }
 
     private static Component genModeLabel(ChunkVaultSettings s) {
-        return Component.literal("Вне записанного: " + (s.useSeed() ? "генерация по сиду ниже" : "пустота (Void)"));
+        return Lang.c("settings.gen", Lang.s(s.useSeed() ? "settings.gen.seed" : "settings.gen.void"));
     }
 
     private void applySeed() {
@@ -145,9 +146,9 @@ public class SettingsScreen extends Screen {
         g.centeredText(this.font, this.title.getString(), this.width / 2, 18, 0xFFFFFFFF);
 
         int x = (this.width - WIDTH) / 2;
-        g.text(this.font, "Сид (только для режима «по сиду»):", x, 40 + ROW_H * 4 - 11, 0xFFAAAAAA, true);
+        g.text(this.font, Lang.s("settings.seed_label"), x, 40 + ROW_H * 4 - 11, 0xFFAAAAAA, true);
         g.text(this.font,
-                "Применяется к новым записям (/chunkvault start), начатым после сохранения.",
+                Lang.s("settings.seed_note"),
                 x, this.height - 20, 0xFF808080, true);
 
         super.extractRenderState(g, mouseX, mouseY, partialTick);
