@@ -1,5 +1,6 @@
 package com.chunkvault.gui;
 
+import com.chunkvault.Lang;
 import com.chunkvault.state.RecordingState;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
@@ -53,7 +54,7 @@ public class ExplorerScreen extends Screen {
     private volatile boolean statusOk = true;
 
     public ExplorerScreen(MapScreen parent) {
-        super(Component.literal("ChunkVault — открыть проект"));
+        super(Lang.c("explorer.title"));
         this.parent = parent;
     }
 
@@ -101,16 +102,16 @@ public class ExplorerScreen extends Screen {
         int y0 = listBottom + 30;
         int half = (W - 6) / 2;
 
-        this.addRenderableWidget(Button.builder(Component.literal("Открыть проект"), b -> openSelected())
+        this.addRenderableWidget(Button.builder(Lang.c("explorer.open_project"), b -> openSelected())
                 .bounds(x, y0, W, 20)
                 .build());
-        this.addRenderableWidget(Button.builder(Component.literal("Копировать в saves"), b -> copySelected())
+        this.addRenderableWidget(Button.builder(Lang.c("explorer.copy"), b -> copySelected())
                 .bounds(x, y0 + 26, half, 20)
                 .build());
-        this.addRenderableWidget(Button.builder(Component.literal("Открыть папку"), b -> openFolder())
+        this.addRenderableWidget(Button.builder(Lang.c("explorer.open_folder"), b -> openFolder())
                 .bounds(x + half + 6, y0 + 26, half, 20)
                 .build());
-        this.addRenderableWidget(Button.builder(Component.literal("Назад"), b -> this.onClose())
+        this.addRenderableWidget(Button.builder(Lang.c("common.back"), b -> this.onClose())
                 .bounds(x, y0 + 52, W, 20)
                 .build());
     }
@@ -131,17 +132,17 @@ public class ExplorerScreen extends Screen {
 
     private void openSelected() {
         if (selected < 0 || selected >= entries.size()) {
-            say("Сначала выберите проект в списке", false);
+            say(Lang.s("explorer.select_project"), false);
             return;
         }
         if (RecordingState.get().isActive()) {
-            say("Сначала остановите запись", false);
+            say(Lang.s("toast.stop_first"), false);
             return;
         }
         String name = entries.get(selected).name();
         ProjectMap.open(name);
         Minecraft.getInstance().setScreenAndShow(parent);
-        parent.showToast("Открыт проект: " + name);
+        parent.showToast(Lang.s("toast.project_opened", name));
     }
 
     private void openFolder() {
@@ -159,9 +160,9 @@ public class ExplorerScreen extends Screen {
                 pb = new ProcessBuilder("xdg-open", path);
             }
             pb.start();
-            say("Папка открыта в системном проводнике", true);
+            say(Lang.s("explorer.folder_opened"), true);
         } catch (Exception e) {
-            say("Не удалось открыть папку: " + e.getMessage(), false);
+            say(Lang.s("explorer.folder_failed", String.valueOf(e.getMessage())), false);
         }
     }
 
@@ -170,13 +171,13 @@ public class ExplorerScreen extends Screen {
             return;
         }
         if (selected < 0 || selected >= entries.size()) {
-            say("Сначала выберите мир в списке", false);
+            say(Lang.s("explorer.select_world"), false);
             return;
         }
         String name = entries.get(selected).name();
         String active = RecordingState.get().sessionName();
         if (active != null && RecordingState.sanitize(active).equalsIgnoreCase(name)) {
-            say("Этот мир сейчас записывается — сначала остановите запись", false);
+            say(Lang.s("explorer.world_recording"), false);
             return;
         }
         Path src = root().resolve(name);
@@ -188,13 +189,13 @@ public class ExplorerScreen extends Screen {
         }
         final String destName = dest;
         copying = true;
-        say("Копирование…", true);
+        say(Lang.s("explorer.copying"), true);
         Thread t = new Thread(() -> {
             try {
                 copyTree(src, savesDir.resolve(destName));
-                say("Скопировано в saves/" + destName + " — он появился в списке миров главного меню", true);
+                say(Lang.s("explorer.copied", destName), true);
             } catch (Exception e) {
-                say("Ошибка копирования: " + e.getMessage(), false);
+                say(Lang.s("explorer.copy_error", String.valueOf(e.getMessage())), false);
             } finally {
                 copying = false;
             }
@@ -242,13 +243,12 @@ public class ExplorerScreen extends Screen {
                 }
             }
         } catch (Exception e) {
-            return "не удалось прочитать мир: " + e.getMessage();
+            return Lang.s("explorer.read_failed", String.valueOf(e.getMessage()));
         }
         String size = bytes >= 1024L * 1024L
-                ? String.format(Locale.ROOT, "%.1f МБ", bytes / 1048576.0)
-                : (bytes / 1024) + " КБ";
-        return "Измерения: " + (dims.isEmpty() ? "—" : String.join(", ", dims))
-                + "  •  файлов регионов: " + regions + "  •  " + size;
+                ? String.format(Locale.ROOT, "%.1f ", bytes / 1048576.0) + Lang.s("unit.mb")
+                : (bytes / 1024) + " " + Lang.s("unit.kb");
+        return Lang.s("explorer.info", dims.isEmpty() ? "—" : String.join(", ", dims), regions, size);
     }
 
     // ------------------------------------------------------------------
@@ -275,12 +275,12 @@ public class ExplorerScreen extends Screen {
         g.fill(0, 0, this.width, this.height, 0xF0101018);
         g.centeredText(this.font, this.title.getString(), this.width / 2, 14, 0xFFFFFFFF);
         int x = (this.width - W) / 2;
-        g.text(this.font, "Папка: " + fit(root().toString(), W - 60), x, 32, 0xFF808090, true);
+        g.text(this.font, Lang.s("explorer.folder", fit(root().toString(), W - 60)), x, 32, 0xFF808090, true);
 
         g.fill(x - 1, LIST_TOP - 1, x + W + 1, listBottom + 1, 0xFF3A3A48);
         g.fill(x, LIST_TOP, x + W, listBottom, 0xFF14161C);
         if (entries.isEmpty()) {
-            g.centeredText(this.font, "Здесь пока нет проектов — создайте «Новый файл»", this.width / 2, LIST_TOP + 16, 0xFF888899);
+            g.centeredText(this.font, Lang.s("explorer.empty"), this.width / 2, LIST_TOP + 16, 0xFF888899);
         }
         int rows = visibleRows();
         scroll = Math.max(0, Math.min(scroll, Math.max(0, entries.size() - rows)));
@@ -296,7 +296,7 @@ public class ExplorerScreen extends Screen {
             g.text(this.font, e.date(), x + W - dateW - 8, ry + 6, 0xFF9AA0B0, true);
         }
         if (entries.size() > rows) {
-            g.text(this.font, (scroll + 1) + "–" + Math.min(entries.size(), scroll + rows) + " из " + entries.size(),
+            g.text(this.font, Lang.s("explorer.range", scroll + 1, Math.min(entries.size(), scroll + rows), entries.size()),
                     x + W - 80, LIST_TOP - 11, 0xFF808090, true);
         }
 
