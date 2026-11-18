@@ -1,5 +1,6 @@
 package com.chunkvault.gui;
 
+import com.chunkvault.Lang;
 import com.chunkvault.ChunkVaultClient;
 import com.chunkvault.state.RecordingState;
 import com.mojang.blaze3d.platform.InputConstants;
@@ -86,7 +87,7 @@ public class MapScreen extends Screen {
     private int zoneR;
 
     public MapScreen() {
-        super(Component.literal("ChunkVault — карта"));
+        super(Lang.c("map.title"));
         recenterOnPlayer();
     }
 
@@ -110,7 +111,7 @@ public class MapScreen extends Screen {
         g.fill(0, 0, this.width, this.height, 0xFF0B0B0F);
 
         if (player == null || level == null) {
-            g.centeredText(this.font, "Нет активного мира.", this.width / 2, this.height / 2, 0xFFFFFFFF);
+            g.centeredText(this.font, Lang.s("map.no_world"), this.width / 2, this.height / 2, 0xFFFFFFFF);
             return;
         }
 
@@ -306,7 +307,7 @@ public class MapScreen extends Screen {
         x += this.font.width("ChunkVault") + 6;
         g.text(this.font, "—", x, 7, 0xFF808090, true);
         x += this.font.width("—") + 6;
-        String projectLabel = hasProject ? ProjectMap.name() : "проект не открыт";
+        String projectLabel = hasProject ? ProjectMap.name() : Lang.s("map.no_project");
         g.text(this.font, projectLabel, x, 7, hasProject ? 0xFFFFD070 : 0xFF909090, true);
         x += this.font.width(projectLabel) + 14;
 
@@ -315,15 +316,15 @@ public class MapScreen extends Screen {
 
         // ---- НОВЫЙ ФАЙЛ (green) and ОТКРЫТЬ (yellow) ----
         newX0 = x;
-        newX1 = drawTopButton(g, newX0, "НОВЫЙ ФАЙЛ", 0xFF2E8B4E, 0xFF3FB365, mouseX, mouseY);
+        newX1 = drawTopButton(g, newX0, Lang.s("button.new_file"), 0xFF2E8B4E, 0xFF3FB365, mouseX, mouseY);
         expX0 = newX1 + 6;
-        expX1 = drawTopButton(g, expX0, "ОТКРЫТЬ", 0xFFB8901A, 0xFFD9AE2C, mouseX, mouseY);
+        expX1 = drawTopButton(g, expX0, Lang.s("button.open"), 0xFFB8901A, 0xFFD9AE2C, mouseX, mouseY);
         int endX = expX1;
 
         // ---- ЗАПИСЬ <-> СТОП: only while a project is open ----
         if (hasProject) {
             btnX0 = endX + 6;
-            btnX1 = drawTopButton(g, btnX0, recording ? "СТОП" : "ЗАПИСЬ",
+            btnX1 = drawTopButton(g, btnX0, recording ? Lang.s("button.stop") : Lang.s("button.record"),
                     recording ? 0xFF7A2020 : 0xFFB03030, recording ? 0xFF9E2C2C : 0xFFD84848, mouseX, mouseY);
             endX = btnX1;
         } else {
@@ -333,16 +334,16 @@ public class MapScreen extends Screen {
 
         // ---- НАСТРОЙКИ (blue-grey) ----
         setX0 = endX + 6;
-        setX1 = drawTopButton(g, setX0, "НАСТРОЙКИ", 0xFF4E5F82, 0xFF6B7FA8, mouseX, mouseY);
+        setX1 = drawTopButton(g, setX0, Lang.s("button.settings"), 0xFF4E5F82, 0xFF6B7FA8, mouseX, mouseY);
 
         // ---- recording status, right-aligned (only if it fits) ----
         String status;
         int statusColor;
         if (recording) {
-            status = "● ЗАПИСЬ  чанков: " + manager.chunksSaved() + "  сущностей: " + manager.entitiesSeen();
+            status = Lang.s("map.status.recording", manager.chunksSaved(), manager.entitiesSeen());
             statusColor = 0xFFFF7070;
         } else if (hasProject) {
-            status = "запись выключена";
+            status = Lang.s("map.status.idle");
             statusColor = 0xFF909090;
         } else {
             status = "";
@@ -354,18 +355,17 @@ public class MapScreen extends Screen {
         }
 
         if (!hasProject) {
-            g.centeredText(this.font, "Создайте «Новый файл» или откройте проект через «Открыть»",
+            g.centeredText(this.font, Lang.s("map.hint_no_project"),
                     this.width / 2, this.height / 2 - 4, 0xFF808090);
         }
 
         // ---- bottom bar: only coordinates and chunks ----
-        String info = "Ты: X: " + (int) Math.floor(player.getX())
-                + "  Y: " + (int) Math.floor(player.getY())
-                + "  Z: " + (int) Math.floor(player.getZ()) + "  |";
+        String info = Lang.s("map.you", (int) Math.floor(player.getX()),
+                (int) Math.floor(player.getY()), (int) Math.floor(player.getZ())) + "  |";
         if (inMap) {
             int bx = (int) Math.floor(centerX + (mouseX - mapCX) / scale);
             int bz = (int) Math.floor(centerZ + (mouseY - mapCY) / scale);
-            info += "  Курсор: X: " + bx + "  Z: " + bz + "  Чанк: " + (bx >> 4) + ", " + (bz >> 4) + "  |";
+            info += "  " + Lang.s("map.cursor", bx, bz, bx >> 4, bz >> 4) + "  |";
         }
         g.text(this.font, info, 8, this.height - BOTTOM_BAR + 5, 0xFFFFFFFF, true);
         g.text(this.font, dimensionId, this.width - this.font.width(dimensionId) - 8,
@@ -623,7 +623,7 @@ public class MapScreen extends Screen {
     /** Switching projects while a recording runs would mix worlds: ask to stop first. */
     private boolean recordingBlocks() {
         if (RecordingState.get().isActive()) {
-            showToast("Сначала остановите запись");
+            showToast(Lang.s("toast.stop_first"));
             return true;
         }
         return false;
@@ -634,8 +634,7 @@ public class MapScreen extends Screen {
         if (RecordingState.get().isActive()) {
             var result = ChunkVaultClient.stopRecording();
             if (result != null) {
-                showToast("Запись остановлена: " + result.chunks() + " чанков, "
-                        + result.chests() + " контейнеров, " + result.entities() + " сущностей");
+                showToast(Lang.s("toast.stopped", result.chunks(), result.chests(), result.entities()));
             }
             return;
         }
@@ -645,7 +644,7 @@ public class MapScreen extends Screen {
         int captured = ChunkVaultClient.startRecording(ProjectMap.name());
         if (captured >= 0) {
             com.chunkvault.state.AutoRecord.setWorld(com.chunkvault.state.AutoRecord.serverKey(), ProjectMap.name());
-            showToast("Запись начата (сразу захвачено " + captured + " чанков)");
+            showToast(Lang.s("toast.started", captured));
         }
     }
 
