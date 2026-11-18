@@ -1,5 +1,6 @@
 package com.chunkvault.gui;
 
+import com.chunkvault.Lang;
 import com.chunkvault.state.RecordingState;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -21,7 +22,7 @@ public class NewProjectScreen extends Screen {
     private String error;
 
     public NewProjectScreen(MapScreen parent) {
-        super(Component.literal("Новый файл"));
+        super(Lang.c("new.title"));
         this.parent = parent;
     }
 
@@ -30,16 +31,16 @@ public class NewProjectScreen extends Screen {
         super.init();
         int x = (this.width - W) / 2;
         int y = this.height / 2 - 20;
-        nameBox = new EditBox(this.font, x, y, W, 20, Component.literal("Имя проекта"));
+        nameBox = new EditBox(this.font, x, y, W, 20, Lang.c("new.name_box"));
         nameBox.setMaxLength(48);
         nameBox.setValue(typedKeep);
         this.addRenderableWidget(nameBox);
 
         int half = (W - 6) / 2;
-        this.addRenderableWidget(Button.builder(Component.literal("Создать"), b -> create())
+        this.addRenderableWidget(Button.builder(Lang.c("new.create"), b -> create())
                 .bounds(x, y + 52, half, 20)
                 .build());
-        this.addRenderableWidget(Button.builder(Component.literal("Отмена"), b -> this.onClose())
+        this.addRenderableWidget(Button.builder(Lang.c("common.cancel"), b -> this.onClose())
                 .bounds(x + half + 6, y + 52, half, 20)
                 .build());
     }
@@ -47,20 +48,20 @@ public class NewProjectScreen extends Screen {
     private void create() {
         String raw = nameBox.getValue().trim();
         if (raw.isEmpty()) {
-            error = "Введите имя проекта";
+            error = Lang.s("new.error.empty");
             return;
         }
         String folder = RecordingState.sanitize(raw);
         if (Files.exists(ProjectMap.root().resolve(folder))) {
-            error = "Проект «" + folder + "» уже есть — откройте его через «Открыть»";
+            error = Lang.s("new.error.exists", folder);
             return;
         }
         if (!ProjectMap.createNew(folder)) {
-            error = "Не удалось создать проект";
+            error = Lang.s("new.error.failed");
             return;
         }
         Minecraft.getInstance().setScreenAndShow(parent);
-        parent.showToast("Создан проект: " + folder);
+        parent.showToast(Lang.s("toast.project_created", folder));
     }
 
     @Override
@@ -73,13 +74,13 @@ public class NewProjectScreen extends Screen {
         g.fill(0, 0, this.width, this.height, 0xF0101018);
         int x = (this.width - W) / 2;
         int y = this.height / 2 - 20;
-        g.centeredText(this.font, "Новый файл", this.width / 2, y - 44, 0xFFFFFFFF);
-        g.text(this.font, "Имя проекта:", x, y - 12, 0xFFAAAAAA, true);
+        g.centeredText(this.font, Lang.s("new.title"), this.width / 2, y - 44, 0xFFFFFFFF);
+        g.text(this.font, Lang.s("new.name_label"), x, y - 12, 0xFFAAAAAA, true);
         if (nameBox != null) {
             typedKeep = nameBox.getValue();
             String typed = typedKeep.trim();
             if (!typed.isEmpty()) {
-                g.text(this.font, "Папка: " + RecordingState.sanitize(typed), x, y + 26, 0xFF70FF90, true);
+                g.text(this.font, Lang.s("new.folder", RecordingState.sanitize(typed)), x, y + 26, 0xFF70FF90, true);
             }
         }
         if (error != null) {
