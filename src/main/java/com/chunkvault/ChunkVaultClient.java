@@ -69,7 +69,7 @@ public class ChunkVaultClient implements ClientModInitializer {
         var level = Minecraft.getInstance().level;
         if (level == null) {
             source.sendFeedback(Component.literal(
-                    "§c[ChunkVault] Нужно быть подключённым к серверу/миру, чтобы собрать настройки. Зайди на сервер и повтори."));
+                    "§c[ChunkVault] " + Lang.s("cmd.need_world")));
             return 0;
         }
         Path gameDir = FabricLoader.getInstance().getGameDir();
@@ -83,16 +83,16 @@ public class ChunkVaultClient implements ClientModInitializer {
                 if (java.nio.file.Files.isDirectory(target)) {
                     com.chunkvault.save.VoidWorldGenBuilder.writeToWorld(target, settings);
                     fixed++;
-                    source.sendFeedback(Component.literal("§a[ChunkVault] Исправлено: " + target));
+                    source.sendFeedback(Component.literal("§a[ChunkVault] " + Lang.s("cmd.fixed", target.toString())));
                 }
             }
         } catch (Exception e) {
-            source.sendFeedback(Component.literal("§c[ChunkVault] Не удалось собрать настройки: " + e));
+            source.sendFeedback(Component.literal("§c[ChunkVault] " + Lang.s("cmd.fix_failed", String.valueOf(e))));
             return 0;
         }
         if (fixed == 0) {
             source.sendFeedback(Component.literal(
-                    "§c[ChunkVault] Не нашёл папку мира '" + name + "' ни в saves/, ни в chunkvault/."));
+                    "§c[ChunkVault] " + Lang.s("cmd.world_not_found", name)));
             return 0;
         }
         return 1;
@@ -148,13 +148,10 @@ public class ChunkVaultClient implements ClientModInitializer {
         int snapshotted = startRecording(name);
         if (snapshotted >= 0) {
             source.sendFeedback(Component.literal(
-                    "§a[ChunkVault] Запись начата: " + name +
-                    " — ходите по миру и открывайте сундуки, всё будет сохраняться. " +
-                    "(сразу захвачено " + snapshotted + " уже прогруженных чанков вокруг тебя)"));
+                    "§a[ChunkVault] " + Lang.s("cmd.started", name, snapshotted)));
         } else {
             source.sendFeedback(Component.literal(
-                    "§c[ChunkVault] Запись уже идёт (" + RecordingState.get().sessionName() +
-                    "). Сначала выполните /chunkvault stop."));
+                    "§c[ChunkVault] " + Lang.s("cmd.already", RecordingState.get().sessionName())));
         }
         return 1;
     }
@@ -243,27 +240,24 @@ public class ChunkVaultClient implements ClientModInitializer {
     private int stop(FabricClientCommandSource source) {
         StopResult result = stopRecording();
         if (result == null) {
-            source.sendFeedback(Component.literal("§c[ChunkVault] Запись не активна."));
+            source.sendFeedback(Component.literal("§c[ChunkVault] " + Lang.s("cmd.not_active")));
             return 0;
         }
         source.sendFeedback(Component.literal(
-                "§a[ChunkVault] Готово: " + result.chunks() + " чанков, " + result.chests() + " контейнеров, "
-                + result.entities() + " сущностей. Сохранено в: " + result.dir()));
+                "§a[ChunkVault] " + Lang.s("cmd.done", result.chunks(), result.chests(), result.entities(), result.dir().toString())));
         source.sendFeedback(Component.literal(
-                "§b[ChunkVault] При заходе в этот мир ты должен оказаться там же, где остановил запись."));
+                "§b[ChunkVault] " + Lang.s("cmd.hint_spawn")));
         return 1;
     }
 
     private int status(FabricClientCommandSource source) {
         if (!RecordingState.get().isActive()) {
-            source.sendFeedback(Component.literal("§7[ChunkVault] Не активно."));
+            source.sendFeedback(Component.literal("§7[ChunkVault] " + Lang.s("cmd.inactive")));
             return 0;
         }
         var manager = RecordingState.get().saveManager();
         source.sendFeedback(Component.literal(
-                "§b[ChunkVault] Идёт запись \"" + RecordingState.get().sessionName() + "\": " +
-                manager.chunksSaved() + " чанков, " + manager.chestsSeen() + " контейнеров, "
-                + manager.entitiesSeen() + " сущностей."));
+                "§b[ChunkVault] " + Lang.s("cmd.status", RecordingState.get().sessionName(), manager.chunksSaved(), manager.chestsSeen(), manager.entitiesSeen())));
         return 1;
     }
 }
