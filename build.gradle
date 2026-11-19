@@ -1,11 +1,4 @@
 plugins {
-    // IMPORTANT: this is NOT the same as id 'fabric-loom'. That's the old
-    // plugin id, which always assumes an obfuscated Minecraft version and
-    // therefore always demands a non-empty `mappings` configuration — that
-    // mismatch is exactly what caused "Configuration 'mappings' has no
-    // dependencies". `net.fabricmc.fabric-loom` is Loom's dedicated
-    // non-remapping variant for unobfuscated versions (26.1+): no mappings,
-    // no remap step, at all.
     id 'net.fabricmc.fabric-loom' version '1.17-SNAPSHOT'
     id 'maven-publish'
 }
@@ -17,9 +10,6 @@ base {
     archivesName = project.archives_base_name
 }
 
-// Gradle 8.x can't run/compile against Java 25 (class file major version 69);
-// Gradle 9.6.1+ added the necessary toolchain support. If your GitHub Actions
-// runner pulls an older wrapper, bump gradle/wrapper/gradle-wrapper.properties.
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(25)
@@ -34,11 +24,6 @@ repositories {
 
 dependencies {
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
-
-    // No mappings() call, and no mod* configurations either: with the
-    // non-remapping plugin there is nothing to remap, so per Fabric's own
-    // 26.1 porting guide, modImplementation/modApi/modCompileOnly become
-    // plain implementation/api/compileOnly.
     implementation "net.fabricmc:fabric-loader:${project.loader_version}"
     implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 }
