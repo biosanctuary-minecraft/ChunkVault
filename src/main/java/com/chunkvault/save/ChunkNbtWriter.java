@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BiFunction;
 
 /**
  * Builds the CompoundTag for one chunk in the same shape the vanilla server
@@ -41,6 +42,15 @@ public final class ChunkNbtWriter {
     }
 
     public static CompoundTag write(ClientLevel level, LevelChunk chunk) {
+        return write(level, chunk, null);
+    }
+
+    /**
+     * @param overrides optional: given a block entity position and the block entity itself, returns the
+     *                  saved tag to write INSTEAD of the client's (which has no chest contents), or null
+     */
+    public static CompoundTag write(ClientLevel level, LevelChunk chunk,
+                                    BiFunction<BlockPos, BlockEntity, CompoundTag> overrides) {
         CompoundTag root = new CompoundTag();
         root.putInt("DataVersion", currentDataVersion());
 
@@ -75,7 +85,10 @@ public final class ChunkNbtWriter {
                 // CHECK: saveWithFullMetadata(HolderLookup.Provider) is the
                 // modern (1.20.5+) signature; older versions used a no-arg
                 // saveWithFullMetadata() or saveWithId().
-                CompoundTag tag = be.saveWithFullMetadata(level.registryAccess());
+                CompoundTag tag = overrides == null ? null : overrides.apply(entry.getKey(), be);
+                if (tag == null) {
+                    tag = be.saveWithFullMetadata(level.registryAccess());
+                }
                 blockEntities.add(tag);
             } catch (Throwable t) {
                 // Don't let one weird block entity abort the whole chunk save.
