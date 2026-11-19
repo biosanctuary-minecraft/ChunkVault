@@ -8,7 +8,6 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
-import net.minecraft.network.chat.Component;
 
 import java.io.IOException;
 import java.nio.file.FileVisitResult;
@@ -25,15 +24,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.stream.Stream;
 
-/**
- * "Открыть": explorer for the chunkvault folder. Opens a project (the map then
- * shows everything saved in it), shows what is inside, opens the folder in the
- * system file manager and copies a world into the game's saves folder so it
- * shows up in the normal world list.
- *
- * (The game only loads worlds from saves/ and only from the main menu, so
- * "entering" a recorded world means copying it there first.)
- */
 public class ExplorerScreen extends Screen {
 
     private static final int W = 360;
@@ -76,7 +66,7 @@ public class ExplorerScreen extends Screen {
         try (Stream<Path> stream = Files.list(root)) {
             stream.filter(Files::isDirectory).forEach(dirs::add);
         } catch (Exception e) {
-            System.err.println("[ChunkVault] could not list " + root + ": " + e);
+            System.err.println("[ChunkVault] Failed to list " + root + ": " + e);
         }
         SimpleDateFormat fmt = new SimpleDateFormat("dd.MM.yyyy HH:mm");
         dirs.sort(Comparator.comparingLong(ExplorerScreen::modified).reversed());
@@ -120,10 +110,6 @@ public class ExplorerScreen extends Screen {
     public void onClose() {
         Minecraft.getInstance().setScreenAndShow(parent);
     }
-
-    // ------------------------------------------------------------------
-    // actions
-    // ------------------------------------------------------------------
 
     private void say(String text, boolean ok) {
         status = text;
@@ -220,7 +206,6 @@ public class ExplorerScreen extends Screen {
         });
     }
 
-    /** One line about a world: dimensions inside, number of region files, total size. */
     private static String describe(Path dir) {
         List<String> dims = new ArrayList<>();
         int regions = 0;
@@ -250,10 +235,6 @@ public class ExplorerScreen extends Screen {
                 : (bytes / 1024) + " " + Lang.s("unit.kb");
         return Lang.s("explorer.info", dims.isEmpty() ? "—" : String.join(", ", dims), regions, size);
     }
-
-    // ------------------------------------------------------------------
-    // drawing / input
-    // ------------------------------------------------------------------
 
     private int visibleRows() {
         return Math.max(1, (listBottom - LIST_TOP) / ROW_H);
