@@ -13,10 +13,14 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.storage.TagValueOutput;
 
+import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -63,6 +67,17 @@ public final class WorldSaveManager {
 
     private final Map<UUID, EntityRecord> entityRecords = new ConcurrentHashMap<>();
 
+    /**
+     * Contents of every container (chest, barrel...) the player has opened, keyed
+     * "dimension|x|y|z". The client never receives chest contents with the chunk, so a
+     * chunk that gets re-sent later would otherwise be re-saved with EMPTY chests and
+     * wipe what we captured. These snapshots are written into every chunk save and are
+     * kept in chunkvault_containers.dat so they also survive between recording sessions.
+     */
+    private record ContainerSnapshot(String typeId, CompoundTag tag) {}
+
+    private final Map<String, ContainerSnapshot> containers = new ConcurrentHashMap<>();
+
     // Track how many chunks/chests we've captured, for /chunkvault status.
     private volatile int chunksSaved = 0;
     private volatile int chestsSeen = 0;
@@ -101,6 +116,79 @@ public final class WorldSaveManager {
         } catch (IOException e) {
             System.err.println("[ChunkVault] could not create save directory " + rootDir + ": " + e);
         }
+        loadContainers();
+    }
+
+    // ------------------------------------------------------------------
+    // container contents
+    // ------------------------------------------------------------------
+
+    private static String containerKey(Level level, BlockPos pos) {
+        return level.dimension().identifier() + "|" + pos.getX() + "|" + pos.getY() + "|" + pos.getZ();
+    }
+
+    private static String typeIdOf(BlockEntity be) {
+        return String.valueOf(BlockEntityType.getKey(be.getType()));
+    }
+
+    /** Stores the current contents of an opened container so every later chunk save includes them. */
+    public synchronized void rememberContainer(ClientLevel level, BlockEntity be) {
+        try {
+            CompoundTag tag = be.saveWithFullMetadata(level.registryAccess());
+            containers.put(containerKey(level, be.getBlockPos()), new ContainerSnapshot(typeIdOf(be), tag));
+            saveContainers();
+        } catch (Throwable t) {
+            System.err.println("[ChunkVault] could not remember container at " + be.getBlockPos() + ": " + t);
+        }
+    }
+
+    /** Stored tag for this block entity, or null (also null if a different block now stands there). */
+    private CompoundTag containerOverride(ClientLevel level, BlockPos pos, BlockEntity be) {
+        ContainerSnapshot snapshot = containers.get(containerKey(level, pos));
+        if (snapshot == null || !snapshot.typeId().equals(typeIdOf(be))) {
+            return null;
+        }
+        return snapshot.tag().copy();
+    }
+
+    private void saveContainers() {
+        try {
+            CompoundTag root = new CompoundTag();
+            for (Map.Entry<String, ContainerSnapshot> e : containers.entrySet()) {
+                CompoundTag entry = new CompoundTag();
+                entry.putString("type", e.getValue().typeId());
+                entry.put("data", e.getValue().tag());
+                root.put(e.getKey(), entry);
+            }
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            NbtIo.write(root, new DataOutputStream(bytes));
+            Files.write(rootDir.resolve("chunkvault_containers.dat"), bytes.toByteArray());
+        } catch (Exception e) {
+            System.err.println("[ChunkVault] could not write chunkvault_containers.dat: " + e);
+        }
+    }
+
+    private void loadContainers() {
+        Path file = rootDir.resolve("chunkvault_containers.dat");
+        if (!Files.isRegularFile(file)) {
+            return;
+        }
+        try (DataInputStream dis = new DataInputStream(new BufferedInputStream(Files.newInputStream(file)))) {
+            CompoundTag root = NbtIo.read(dis);
+            for (String key : root.keySet()) {
+                CompoundTag entry = root.getCompound(key).orElse(null);
+                if (entry == null) {
+                    continue;
+                }
+                String type = entry.getString("type").orElse("");
+                CompoundTag data = entry.getCompound("data").orElse(null);
+                if (data != null && !type.isEmpty()) {
+                    containers.put(key, new ContainerSnapshot(type, data));
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("[ChunkVault] could not read chunkvault_containers.dat: " + e);
+        }
     }
 
     /**
@@ -132,7 +220,8 @@ public final class WorldSaveManager {
                 sawOverworld = true;
             }
 
-            CompoundTag tag = ChunkNbtWriter.write(level, chunk);
+            CompoundTag tag = ChunkNbtWriter.write(level, chunk,
+                    (pos, be) -> containerOverride(level, pos, be));
 
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
             NbtIo.write(tag, new DataOutputStream(bytes));
