@@ -1,5 +1,6 @@
 package com.chunkvault.mixin;
 
+import com.chunkvault.Lang;
 import com.chunkvault.state.LastInteraction;
 import com.chunkvault.state.RecordingState;
 import net.minecraft.client.Minecraft;
@@ -7,6 +8,7 @@ import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.network.chat.Component;
 import net.minecraft.world.Container;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.entity.player.Inventory;
@@ -128,6 +130,19 @@ public abstract class ContainerCaptureMixin {
 
         manager.notifyChestCaptured();
         resaveChunkContaining(level, pos);
+
+        // chat message: what was saved and where
+        if (client.player != null) {
+            int filled = 0;
+            for (int i = 0; i < sourceSize; i++) {
+                if (!source.getItem(i).isEmpty()) {
+                    filled++;
+                }
+            }
+            client.player.sendSystemMessage(Component.literal("§a[ChunkVault] ").append(
+                    Lang.c("chest.saved", state.getBlock().getName(),
+                            pos.getX(), pos.getY(), pos.getZ(), filled, sourceSize)));
+        }
     }
 
     private static void copyItems(Container from, int fromStart, Container to, int toStart, int count) {
