@@ -3,8 +3,8 @@ package com.chunkvault.save;
 import com.chunkvault.state.ChunkVaultSettings;
 import net.minecraft.SharedConstants;
 import net.minecraft.client.multiplayer.ClientLevel;
-import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.IntArrayTag;
 import net.minecraft.nbt.ListTag;
@@ -35,57 +35,19 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public final class WorldSaveManager {
 
+    private record EntityRecord(String entitiesFolder, int chunkX, int chunkZ, CompoundTag tag) {}
+    private record ContainerSnapshot(String typeId, CompoundTag tag) {}
+
     private final Path rootDir;
     private final Path gameDir;
     private final String levelName;
     private final Map<String, SimpleRegionFile> openRegions = new ConcurrentHashMap<>();
-
-    // Which chunks we've recorded, keyed "dimensionId:chunkX,chunkZ" — used
-    // by the in-game map screen to show what's already saved around the
-    // player. Not persisted; only matters for the current session's UI.
     private final Set<String> recordedChunks = ConcurrentHashMap.newKeySet();
-
-    /**
-     * Last seen state of every non-player entity standing in a recorded
-     * chunk, keyed by UUID. Entities usually arrive AFTER their chunk, so
-     * they are sampled periodically (see snapshotEntities) and written out
-     * once, when recording stops.
-     */
-    private static final class EntityRecord {
-        final String entitiesFolder;
-        final int chunkX;
-        final int chunkZ;
-        final CompoundTag tag;
-
-        EntityRecord(String entitiesFolder, int chunkX, int chunkZ, CompoundTag tag) {
-            this.entitiesFolder = entitiesFolder;
-            this.chunkX = chunkX;
-            this.chunkZ = chunkZ;
-            this.tag = tag;
-        }
-    }
-
     private final Map<UUID, EntityRecord> entityRecords = new ConcurrentHashMap<>();
-
-    /**
-     * Contents of every container (chest, barrel...) the player has opened, keyed
-     * "dimension|x|y|z". The client never receives chest contents with the chunk, so a
-     * chunk that gets re-sent later would otherwise be re-saved with EMPTY chests and
-     * wipe what we captured. These snapshots are written into every chunk save and are
-     * kept in chunkvault_containers.dat so they also survive between recording sessions.
-     */
-    private record ContainerSnapshot(String typeId, CompoundTag tag) {}
-
     private final Map<String, ContainerSnapshot> containers = new ConcurrentHashMap<>();
 
-    // Track how many chunks/chests we've captured, for /chunkvault status.
-    private volatile int chunksSaved = 0;
-    private volatile int chestsSeen = 0;
-
-    // Remembers whether we've actually seen the player in the Overworld
-    // during this session, so closeAndFinish() knows whether the captured
-    // spawnPos is meaningful (see class doc on dimension-specific spawn).
-    private volatile boolean sawOverworld = false;
+    private volatile int chunksSaved;
+    private volatile int chestsSeen;
 
     public WorldSaveManager(Path rootDir, Path gameDir, String levelName) {
         this.rootDir = rootDir;
@@ -109,19 +71,19 @@ public final class WorldSaveManager {
         return chestsSeen;
     }
 
+    public int entitiesSeen() {
+        return entityRecords.size();
+    }
+
     public void init() {
         try {
             Files.createDirectories(rootDir.resolve("dimensions/minecraft/overworld/region"));
             Files.createDirectories(rootDir.resolve("data"));
         } catch (IOException e) {
-            System.err.println("[ChunkVault] could not create save directory " + rootDir + ": " + e);
+            System.err.println("[ChunkVault] Failed to create save directory " + rootDir + ": " + e);
         }
         loadContainers();
     }
-
-    // ------------------------------------------------------------------
-    // container contents
-    // ------------------------------------------------------------------
 
     private static String containerKey(Level level, BlockPos pos) {
         return level.dimension().identifier() + "|" + pos.getX() + "|" + pos.getY() + "|" + pos.getZ();
@@ -131,18 +93,16 @@ public final class WorldSaveManager {
         return String.valueOf(BuiltInRegistries.BLOCK.getKey(be.getBlockState().getBlock()));
     }
 
-    /** Stores the current contents of an opened container so every later chunk save includes them. */
     public synchronized void rememberContainer(ClientLevel level, BlockEntity be) {
         try {
             CompoundTag tag = be.saveWithFullMetadata(level.registryAccess());
             containers.put(containerKey(level, be.getBlockPos()), new ContainerSnapshot(typeIdOf(be), tag));
             saveContainers();
         } catch (Throwable t) {
-            System.err.println("[ChunkVault] could not remember container at " + be.getBlockPos() + ": " + t);
+            System.err.println("[ChunkVault] Failed to cache container at " + be.getBlockPos() + ": " + t);
         }
     }
 
-    /** Stored tag for this block entity, or null (also null if a different block now stands there). */
     private CompoundTag containerOverride(ClientLevel level, BlockPos pos, BlockEntity be) {
         ContainerSnapshot snapshot = containers.get(containerKey(level, pos));
         if (snapshot == null || !snapshot.typeId().equals(typeIdOf(be))) {
@@ -164,7 +124,7 @@ public final class WorldSaveManager {
             NbtIo.write(root, new DataOutputStream(bytes));
             Files.write(rootDir.resolve("chunkvault_containers.dat"), bytes.toByteArray());
         } catch (Exception e) {
-            System.err.println("[ChunkVault] could not write chunkvault_containers.dat: " + e);
+            System.err.println("[ChunkVault] Failed to write chunkvault_containers.dat: " + e);
         }
     }
 
@@ -187,46 +147,23 @@ public final class WorldSaveManager {
                 }
             }
         } catch (Exception e) {
-            System.err.println("[ChunkVault] could not read chunkvault_containers.dat: " + e);
+            System.err.println("[ChunkVault] Failed to read chunkvault_containers.dat: " + e);
         }
     }
 
-    /**
-     * Region folder for a dimension. Fixed: 26.1+ dropped the legacy
-     * region/, DIM-1/, DIM1/ folders entirely — EVERY dimension, including
-     * the Overworld, now lives under the unified
-     * dimensions/<namespace>/<path>/region/ layout (e.g.
-     * dimensions/minecraft/the_nether/region/). Writing into the old
-     * DIM-1/region/ path (what this method used to do) meant the game
-     * never even looked there and silently generated fresh terrain instead
-     * — no error, just empty-looking "clean" chunks, which is exactly the
-     * bug this fixes.
-     */
     private static String regionFolderFor(Level level) {
         var id = level.dimension().identifier();
         return "dimensions/" + id.getNamespace() + "/" + id.getPath() + "/region";
     }
 
-    /**
-     * Serializes and appends one chunk to the correct region file.
-     * Safe to call repeatedly for the same chunk (e.g. re-entering an area) —
-     * SimpleRegionFile just appends a new copy and updates the offset table,
-     * so the newest write always wins on next load. This wastes disk space
-     * over a long session; acceptable for a "backup as you explore" tool.
-     */
     public synchronized void saveChunk(ClientLevel level, LevelChunk chunk) {
         try {
-            if (level.dimension().equals(Level.OVERWORLD)) {
-                sawOverworld = true;
-            }
-
             CompoundTag tag = ChunkNbtWriter.write(level, chunk,
                     (pos, be) -> containerOverride(level, pos, be));
 
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
             NbtIo.write(tag, new DataOutputStream(bytes));
 
-            // Fixed: ChunkPos.x/z are private now; use the x()/z() accessors.
             int chunkX = chunk.getPos().x();
             int chunkZ = chunk.getPos().z();
             int regionX = Math.floorDiv(chunkX, 32);
@@ -238,38 +175,20 @@ public final class WorldSaveManager {
                 try {
                     Path dir = rootDir.resolve(regionFolder);
                     Files.createDirectories(dir);
-                    Path file = dir.resolve("r." + regionX + "." + regionZ + ".mca");
-                    return new SimpleRegionFile(file);
+                    return new SimpleRegionFile(dir.resolve("r." + regionX + "." + regionZ + ".mca"));
                 } catch (IOException e) {
                     throw new RuntimeException(e);
                 }
             });
 
-            int localX = Math.floorMod(chunkX, 32);
-            int localZ = Math.floorMod(chunkZ, 32);
-            region.writeChunk(localX, localZ, bytes.toByteArray());
+            region.writeChunk(Math.floorMod(chunkX, 32), Math.floorMod(chunkZ, 32), bytes.toByteArray());
             recordedChunks.add(level.dimension().identifier() + ":" + chunkX + "," + chunkZ);
             chunksSaved++;
         } catch (Exception e) {
-            System.err.println("[ChunkVault] failed to save chunk " + chunk.getPos() + ": " + e);
+            System.err.println("[ChunkVault] Failed to save chunk " + chunk.getPos() + ": " + e);
         }
     }
 
-    /** Used by the map screen to show which nearby chunks are already recorded. */
-    public boolean isRecorded(String dimensionId, int chunkX, int chunkZ) {
-        return recordedChunks.contains(dimensionId + ":" + chunkX + "," + chunkZ);
-    }
-
-    public int entitiesSeen() {
-        return entityRecords.size();
-    }
-
-    /**
-     * Samples every non-player entity the client currently knows about that
-     * stands in an already-recorded chunk (dropped items, mobs, item frames,
-     * armor stands, ...). Passengers are skipped — their vehicle stores them.
-     * Called about once a second while recording and once more at stop.
-     */
     public synchronized void snapshotEntities(ClientLevel level) {
         if (!ChunkVaultSettings.get().saveEntities()) {
             return;
@@ -292,16 +211,14 @@ public final class WorldSaveManager {
                 entity.saveWithoutId(output);
                 entityRecords.put(entity.getUUID(), new EntityRecord(entitiesFolder, chunkX, chunkZ, output.buildResult()));
             } catch (Throwable ignored) {
-                // one odd entity must never break recording
             }
         }
     }
 
-    /** Writes the collected entities as vanilla entity-storage chunks: entities/r.X.Z.mca, {DataVersion, Position, Entities}. */
     private void flushEntities() {
         Map<String, List<EntityRecord>> byChunk = new HashMap<>();
         for (EntityRecord record : entityRecords.values()) {
-            byChunk.computeIfAbsent(record.entitiesFolder + "|" + record.chunkX + "|" + record.chunkZ,
+            byChunk.computeIfAbsent(record.entitiesFolder() + "|" + record.chunkX() + "|" + record.chunkZ(),
                     k -> new ArrayList<>()).add(record);
         }
         int dataVersion = SharedConstants.getCurrentVersion().dataVersion().version();
@@ -310,57 +227,42 @@ public final class WorldSaveManager {
                 EntityRecord first = group.get(0);
                 CompoundTag root = new CompoundTag();
                 root.putInt("DataVersion", dataVersion);
-                root.put("Position", new IntArrayTag(new int[]{first.chunkX, first.chunkZ}));
+                root.put("Position", new IntArrayTag(new int[]{first.chunkX(), first.chunkZ()}));
                 ListTag list = new ListTag();
                 for (EntityRecord record : group) {
-                    list.add(record.tag);
+                    list.add(record.tag());
                 }
                 root.put("Entities", list);
 
                 ByteArrayOutputStream bytes = new ByteArrayOutputStream();
                 NbtIo.write(root, new DataOutputStream(bytes));
 
-                int regionX = Math.floorDiv(first.chunkX, 32);
-                int regionZ = Math.floorDiv(first.chunkZ, 32);
-                String key = first.entitiesFolder + ":" + regionX + "," + regionZ;
+                int regionX = Math.floorDiv(first.chunkX(), 32);
+                int regionZ = Math.floorDiv(first.chunkZ(), 32);
+                String key = first.entitiesFolder() + ":" + regionX + "," + regionZ;
                 SimpleRegionFile region = openRegions.computeIfAbsent(key, k -> {
                     try {
-                        Path dir = rootDir.resolve(first.entitiesFolder);
+                        Path dir = rootDir.resolve(first.entitiesFolder());
                         Files.createDirectories(dir);
                         return new SimpleRegionFile(dir.resolve("r." + regionX + "." + regionZ + ".mca"));
                     } catch (IOException e) {
                         throw new RuntimeException(e);
                     }
                 });
-                region.writeChunk(Math.floorMod(first.chunkX, 32), Math.floorMod(first.chunkZ, 32), bytes.toByteArray());
+                region.writeChunk(Math.floorMod(first.chunkX(), 32), Math.floorMod(first.chunkZ(), 32), bytes.toByteArray());
             } catch (Exception e) {
-                System.err.println("[ChunkVault] failed to save entities of a chunk: " + e);
+                System.err.println("[ChunkVault] Failed to write entity chunk: " + e);
             }
         }
     }
 
-    /**
-     * @param spawnPos the player's position when /chunkvault stop was run,
-     *                 or null if it isn't known to be an Overworld position
-     *                 (level.dat's SpawnX/Y/Z is always interpreted as an
-     *                 Overworld coordinate — writing Nether/End coordinates
-     *                 there just drops the player in unrelated Overworld
-     *                 terrain, which is exactly the bug this parameter
-     *                 avoids). Pass null and the template's own spawn point
-     *                 is kept instead.
-     * @param uuid the local player's UUID, used to name the playerdata file
-     *             so the game recognizes it as "the" singleplayer player.
-     * @param playerTag full player state (position/rotation/dimension) from
-     *                  PlayerDataWriter.buildPlayerTag(...), or null to skip
-     *                  writing player position entirely.
-     */
-    public synchronized void closeAndFinish(BlockPos spawnPos, java.util.UUID uuid, CompoundTag playerTag) {
+    public synchronized void closeAndFinish(BlockPos spawnPos, UUID uuid, CompoundTag playerTag) {
         flushEntities();
         for (SimpleRegionFile region : openRegions.values()) {
             try {
                 region.close();
             } catch (IOException e) {
-                System.err.println("[ChunkVault] error closing region file: " + e);
+                System.err.println("[ChunkVault] Error closing region file: " + e);
             }
         }
         openRegions.clear();
@@ -368,10 +270,5 @@ public final class WorldSaveManager {
             PlayerDataWriter.writeToWorld(rootDir, uuid, playerTag);
         }
         LevelDatWriter.write(rootDir, gameDir, levelName, spawnPos, playerTag);
-    }
-
-    // Overload used by RecordingState when no player position is available.
-    public void closeAndFinish() {
-        closeAndFinish(null, null, null);
     }
 }
