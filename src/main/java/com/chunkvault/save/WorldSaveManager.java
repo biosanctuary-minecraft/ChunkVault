@@ -3,6 +3,7 @@ package com.chunkvault.save;
 import com.chunkvault.state.ChunkVaultSettings;
 import net.minecraft.SharedConstants;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.IntArrayTag;
@@ -14,7 +15,6 @@ import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
-import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.storage.TagValueOutput;
 
@@ -128,7 +128,7 @@ public final class WorldSaveManager {
     }
 
     private static String typeIdOf(BlockEntity be) {
-        return String.valueOf(BlockEntityType.getKey(be.getType()));
+        return String.valueOf(BuiltInRegistries.BLOCK.getKey(be.getBlockState().getBlock()));
     }
 
     /** Stores the current contents of an opened container so every later chunk save includes them. */
