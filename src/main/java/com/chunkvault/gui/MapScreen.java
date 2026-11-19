@@ -1,46 +1,29 @@
 package com.chunkvault.gui;
 
-import com.chunkvault.Lang;
 import com.chunkvault.ChunkVaultClient;
+import com.chunkvault.Lang;
+import com.chunkvault.state.AutoRecord;
 import com.chunkvault.state.RecordingState;
 import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.RenderPipelines;
-import net.minecraft.network.chat.Component;
+import net.minecraft.world.level.chunk.EmptyLevelChunk;
 import net.minecraft.world.level.chunk.LevelChunk;
 
-/**
- * Top-down world map.
- *
- * Rendering: terrain is drawn from GPU region textures (MapTextures) — a few
- * blit() calls per frame no matter how far out you zoom, and every block
- * stays visible. If textures are unavailable it falls back to the older
- * fill()-based renderer below.
- *
- * Other notes (why it is both sharper and cheaper than before):
- *  - the map is drawn in real DEVICE pixels (the GUI matrix is scaled by
- *    1/guiScale for the map layer), so terrain is no longer snapped to the
- *    coarse GUI-pixel grid — 2-4x finer at typical GUI scales, and the
- *    hover frame / player arrow can be genuinely thin;
- *  - every chunk keeps pre-merged rectangles per detail level (MapCache.Mesh),
- *    so a chunk costs a handful of fill() calls instead of up to 256;
- *  - visible chunks are found by looking up the on-screen chunk range, not by
- *    walking the whole cache every frame, and chunk re-reads are throttled and
- *    paused while dragging.
- *
- * Controls: LMB drag = pan, wheel = zoom to cursor, RMB = back to player.
- * Top bar button toggles recording: ЗАПИСЬ (start) <-> СТОП (stop).
- */
+import java.util.Arrays;
+import java.util.Map;
+
 public class MapScreen extends Screen {
 
     private static final int TOP_BAR = 22;
     private static final int BOTTOM_BAR = 18;
-    private static final double MIN_SCALE = 0.125; // GUI pixels per block
+    private static final double MIN_SCALE = 0.125;
     private static final double MAX_SCALE = 16.0;
-    /** Max fill() calls spent on terrain per frame. Lower it if the map ever lags, raise it for more detail. */
     private static final int RECT_BUDGET = 9000;
 
     private static double lastScale = 1.0;
@@ -50,20 +33,17 @@ public class MapScreen extends Screen {
     private double scale = lastScale;
     private int frame;
 
-    // device pixels per GUI pixel, and the map area in device pixels
     private double dev = 1.0;
     private int clipX0;
     private int clipY0;
     private int clipX1;
     private int clipY1;
 
-    // visible-chunk scratch buffers (reused every frame, no per-frame allocation)
     private int[] visCx = new int[512];
     private int[] visCz = new int[512];
     private MapCache.ChunkColors[] visCol = new MapCache.ChunkColors[512];
     private int visCount;
 
-    // record / stop button (drawn by hand, hit-tested in mouseClicked)
     private int btnX0;
     private int btnY0;
     private int btnX1;
@@ -77,7 +57,6 @@ public class MapScreen extends Screen {
     private String toast;
     private long toastUntil;
 
-    // live load zone (chunks the client really has inside the render distance), stored as horizontal runs
     private int[] zoneX0 = new int[256];
     private int[] zoneX1 = new int[256];
     private int[] zoneZ = new int[256];
@@ -135,11 +114,10 @@ public class MapScreen extends Screen {
         var cache = ProjectMap.forDimension(dimensionId);
         boolean hasProject = ProjectMap.isOpen();
 
-        double ppc = scale * 16.0;   // GUI pixels per chunk
-        double ppcDev = ppc * dev;   // device pixels per chunk
+        double ppc = scale * 16.0;
+        double ppcDev = ppc * dev;
         var manager = RecordingState.get().saveManager();
 
-        // The map shows the open project; while recording, the live load zone is tinted red.
         boolean recording = RecordingState.get().isActive() && manager != null;
         if (!recording) {
             zoneCount = 0;
@@ -147,7 +125,6 @@ public class MapScreen extends Screen {
             updateZone(mc, level, player);
         }
 
-        // ---- which renderer: GPU textures (fast) or the fill() fallback ----
         MapTextures.beginFrame(frame, dimensionId, cache);
         boolean useTex = MapTextures.available();
 
@@ -161,7 +138,6 @@ public class MapScreen extends Screen {
         int detail = 1;
 
         if (!useTex && hasProject) {
-            // ---- fallback: collect the project's chunks on screen ----
             long area = (long) (maxCx - minCx + 1) * (long) (maxCz - minCz + 1);
             if (area <= cache.size() * 2L) {
                 for (int cz = minCz; cz <= maxCz; cz++) {
@@ -182,8 +158,7 @@ public class MapScreen extends Screen {
                 }
             }
 
-            // pick the finest detail level that fits the fill() budget
-            long[] totals = new long[4]; // 16x16, 8x8, 4x4, 2x2
+            long[] totals = new long[4];
             for (int i = 0; i < visCount; i++) {
                 MapCache.ChunkColors c = visCol[i];
                 totals[0] += c.m16.count;
@@ -200,7 +175,6 @@ public class MapScreen extends Screen {
             }
         }
 
-        // ================= map layer, drawn in device pixels =================
         g.enableScissor(mapX0, mapY0, mapX1, mapY1);
         float inv = (float) (1.0 / dev);
         g.pose().pushMatrix();
@@ -237,7 +211,6 @@ public class MapScreen extends Screen {
             }
         }
 
-        // live load zone: translucent red over the chunks the client has right now (within render distance)
         if (recording && zoneCount > 0) {
             for (int i = 0; i < zoneCount; i++) {
                 int x0 = (int) Math.round((mapCX + (zoneX0[i] * 16.0 - centerX) * scale) * dev);
@@ -246,7 +219,6 @@ public class MapScreen extends Screen {
                 int y1 = (int) Math.round((mapCY + ((zoneZ[i] + 1) * 16.0 - centerZ) * scale) * dev);
                 fillI(g, x0, y0, x1, y1, 0x55FF1A1A);
             }
-            // thin bright frame around the whole render-distance square, so it reads even over red terrain
             int fx0 = (int) Math.round((mapCX + ((zoneCx - zoneR) * 16.0 - centerX) * scale) * dev);
             int fx1 = (int) Math.round((mapCX + ((zoneCx + zoneR + 1) * 16.0 - centerX) * scale) * dev);
             int fy0 = (int) Math.round((mapCY + ((zoneCz - zoneR) * 16.0 - centerZ) * scale) * dev);
@@ -257,7 +229,6 @@ public class MapScreen extends Screen {
             fillI(g, fx1 - 1, fy0, fx1, fy1, 0xCCFF4040);
         }
 
-        // chunk grid when zoomed in enough: 1 device pixel wide
         if (ppc >= 48) {
             for (int cx = minCx; cx <= maxCx + 1; cx++) {
                 int x = (int) Math.round((mapCX + (cx * 16.0 - centerX) * scale) * dev);
@@ -269,7 +240,6 @@ public class MapScreen extends Screen {
             }
         }
 
-        // hovered chunk: light fill + a thin (1 device pixel) frame, like Xaero's
         if (inMap) {
             int hbx = (int) Math.floor(centerX + (mouseX - mapCX) / scale);
             int hbz = (int) Math.floor(centerZ + (mouseY - mapCY) / scale);
@@ -286,22 +256,17 @@ public class MapScreen extends Screen {
             fillI(g, x1 - 1, y0, x1, y1, 0xB0FFFFFF);
         }
 
-        // player arrow, rasterised in device pixels, pointing where the player looks
         double pcx = (mapCX + (player.getX() - centerX) * scale) * dev;
         double pcy = (mapCY + (player.getZ() - centerZ) * scale) * dev;
         double yaw = Math.toRadians(player.getYRot());
-        // Minecraft yaw 0 = south (+Z, screen down), 90 = west (-X, screen left)
         drawArrow(g, pcx, pcy, -Math.sin(yaw), Math.cos(yaw), 3.2 * dev + 5.0);
 
         g.pose().popMatrix();
         g.disableScissor();
-        // ================= end of device-pixel layer =================
 
-        // ---- bars with text ----
         g.fill(0, 0, this.width, TOP_BAR, 0xFF1A1A22);
         g.fill(0, this.height - BOTTOM_BAR, this.width, this.height, 0xFF1A1A22);
 
-        // ---- title: ChunkVault — <project name> ----
         int x = 8;
         g.text(this.font, "ChunkVault", x, 7, 0xFFFFFFFF, true);
         x += this.font.width("ChunkVault") + 6;
@@ -314,14 +279,12 @@ public class MapScreen extends Screen {
         btnY0 = 3;
         btnY1 = TOP_BAR - 3;
 
-        // ---- НОВЫЙ ФАЙЛ (green) and ОТКРЫТЬ (yellow) ----
         newX0 = x;
         newX1 = drawTopButton(g, newX0, Lang.s("button.new_file"), 0xFF2E8B4E, 0xFF3FB365, mouseX, mouseY);
         expX0 = newX1 + 6;
         expX1 = drawTopButton(g, expX0, Lang.s("button.open"), 0xFFB8901A, 0xFFD9AE2C, mouseX, mouseY);
         int endX = expX1;
 
-        // ---- ЗАПИСЬ <-> СТОП: only while a project is open ----
         if (hasProject) {
             btnX0 = endX + 6;
             btnX1 = drawTopButton(g, btnX0, recording ? Lang.s("button.stop") : Lang.s("button.record"),
@@ -332,11 +295,9 @@ public class MapScreen extends Screen {
             btnX1 = 0;
         }
 
-        // ---- НАСТРОЙКИ (blue-grey) ----
         setX0 = endX + 6;
         setX1 = drawTopButton(g, setX0, Lang.s("button.settings"), 0xFF4E5F82, 0xFF6B7FA8, mouseX, mouseY);
 
-        // ---- recording status, right-aligned (only if it fits) ----
         String status;
         int statusColor;
         if (recording) {
@@ -359,7 +320,6 @@ public class MapScreen extends Screen {
                     this.width / 2, this.height / 2 - 4, 0xFF808090);
         }
 
-        // ---- bottom bar: only coordinates and chunks ----
         String info = Lang.s("map.you", (int) Math.floor(player.getX()),
                 (int) Math.floor(player.getY()), (int) Math.floor(player.getZ())) + "  |";
         if (inMap) {
@@ -371,7 +331,6 @@ public class MapScreen extends Screen {
         g.text(this.font, dimensionId, this.width - this.font.width(dimensionId) - 8,
                 this.height - BOTTOM_BAR + 5, 0xFFCCCCCC, true);
 
-        // ---- short result message after pressing the button ----
         if (toast != null && System.currentTimeMillis() < toastUntil) {
             int tw = this.font.width(toast) + 16;
             int tx0 = (this.width - tw) / 2;
@@ -380,11 +339,9 @@ public class MapScreen extends Screen {
         }
     }
 
-    /** Draws the terrain as region textures: one blit() per 16x16-chunk region on screen. */
     private void drawTerrainTextured(GuiGraphicsExtractor g, String dimensionId,
-                                     java.util.Map<Long, MapCache.ChunkColors> cache,
+                                     Map<Long, MapCache.ChunkColors> cache,
                                      double mapCX, double mapCY, int minCx, int maxCx, int minCz, int maxCz) {
-        // zoomed far out, the coarse texture (1 px per 4 blocks) stays sharp instead of shimmering
         int lodIdx = scale * dev >= 0.6 ? 0 : 1;
         int size = MapTextures.SIZE[lodIdx];
         var regionKeys = ProjectMap.regionKeys(dimensionId);
@@ -417,13 +374,7 @@ public class MapScreen extends Screen {
         }
     }
 
-    /**
-     * Rebuilds the live load zone: every chunk the client actually holds inside
-     * the render-distance square around the player, merged into horizontal runs
-     * (a few dozen fill() calls instead of one per chunk).
-     */
-    private void updateZone(Minecraft mc, net.minecraft.client.multiplayer.ClientLevel level,
-                            net.minecraft.client.player.LocalPlayer player) {
+    private void updateZone(Minecraft mc, ClientLevel level, LocalPlayer player) {
         int r = mc.options.renderDistance().get();
         int pcx = (int) Math.floor(player.getX() / 16.0);
         int pcz = (int) Math.floor(player.getZ() / 16.0);
@@ -440,9 +391,9 @@ public class MapScreen extends Screen {
                 } else if (!loaded && runStart != Integer.MIN_VALUE) {
                     if (zoneCount == zoneX0.length) {
                         int n = zoneCount * 2;
-                        zoneX0 = java.util.Arrays.copyOf(zoneX0, n);
-                        zoneX1 = java.util.Arrays.copyOf(zoneX1, n);
-                        zoneZ = java.util.Arrays.copyOf(zoneZ, n);
+                        zoneX0 = Arrays.copyOf(zoneX0, n);
+                        zoneX1 = Arrays.copyOf(zoneX1, n);
+                        zoneZ = Arrays.copyOf(zoneZ, n);
                     }
                     zoneX0[zoneCount] = runStart;
                     zoneX1[zoneCount] = cx;
@@ -454,22 +405,17 @@ public class MapScreen extends Screen {
         }
     }
 
-    /**
-     * True only for a chunk the client really holds. level.hasChunk() said "yes"
-     * for everything inside the render distance, including chunks that never
-     * arrived; the client hands out a shared EmptyLevelChunk placeholder for those.
-     */
-    private static boolean isLoaded(net.minecraft.client.multiplayer.ClientLevel level, int cx, int cz) {
+    private static boolean isLoaded(ClientLevel level, int cx, int cz) {
         var chunk = level.getChunk(cx, cz);
-        return chunk instanceof LevelChunk && !(chunk instanceof net.minecraft.world.level.chunk.EmptyLevelChunk);
+        return chunk instanceof LevelChunk && !(chunk instanceof EmptyLevelChunk);
     }
 
     private void addVisible(int cx, int cz, MapCache.ChunkColors colors) {
         if (visCount == visCx.length) {
             int n = visCount * 2;
-            visCx = java.util.Arrays.copyOf(visCx, n);
-            visCz = java.util.Arrays.copyOf(visCz, n);
-            visCol = java.util.Arrays.copyOf(visCol, n);
+            visCx = Arrays.copyOf(visCx, n);
+            visCz = Arrays.copyOf(visCz, n);
+            visCol = Arrays.copyOf(visCol, n);
         }
         visCx[visCount] = cx;
         visCz[visCount] = cz;
@@ -477,11 +423,6 @@ public class MapScreen extends Screen {
         visCount++;
     }
 
-    // ------------------------------------------------------------------
-    // Drawing helpers (device-pixel coordinates)
-    // ------------------------------------------------------------------
-
-    /** Rounds both edges (neighbouring rectangles share an edge -> no seams, no overlap) and clips to the map. */
     private void fillDev(GuiGraphicsExtractor g, double x0, double y0, double x1, double y1, int color) {
         int ix0 = (int) Math.round(x0);
         int iy0 = (int) Math.round(y0);
@@ -506,11 +447,6 @@ public class MapScreen extends Screen {
         }
     }
 
-    /**
-     * Player arrow (tip, two back corners, notch) with a 1-device-pixel dark
-     * outline, rotated to the facing direction (fx, fy) and rasterised row by
-     * row into horizontal runs of one colour.
-     */
     private void drawArrow(GuiGraphicsExtractor g, double cx, double cy, double fx, double fy, double len) {
         if (cx < clipX0 - len || cx > clipX1 + len || cy < clipY0 - len || cy > clipY1 + len) {
             return;
@@ -532,8 +468,8 @@ public class MapScreen extends Screen {
                 if (ix <= xMax) {
                     double px = ix + 0.5 - cx;
                     double py = iy + 0.5 - cy;
-                    double u = px * fx + py * fy;   // along the facing direction
-                    double v = -px * fy + py * fx;  // sideways
+                    double u = px * fx + py * fy;
+                    double v = -px * fy + py * fx;
                     if (u > backU - 2 && u < tipU + 2 && Math.abs(v) < wid + 2) {
                         if (inTri(u, v, tipU, 0, backU, wid, notchU, 0)
                                 || inTri(u, v, tipU, 0, notchU, 0, backU, -wid)) {
@@ -579,10 +515,6 @@ public class MapScreen extends Screen {
         return Math.sqrt(qx * qx + qy * qy);
     }
 
-    // ------------------------------------------------------------------
-    // Mouse input (Screen events)
-    // ------------------------------------------------------------------
-
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean isDoubleClick) {
         if (event.button() == InputConstants.MOUSE_BUTTON_LEFT && event.y() >= btnY0 && event.y() < btnY1) {
@@ -615,12 +547,11 @@ public class MapScreen extends Screen {
             return true;
         }
         if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
-            return true; // start of a drag
+            return true;
         }
         return super.mouseClicked(event, isDoubleClick);
     }
 
-    /** Switching projects while a recording runs would mix worlds: ask to stop first. */
     private boolean recordingBlocks() {
         if (RecordingState.get().isActive()) {
             showToast(Lang.s("toast.stop_first"));
@@ -629,7 +560,6 @@ public class MapScreen extends Screen {
         return false;
     }
 
-    /** СТОП stops and saves; ЗАПИСЬ starts recording into the open project. */
     private void toggleRecording() {
         if (RecordingState.get().isActive()) {
             var result = ChunkVaultClient.stopRecording();
@@ -643,12 +573,11 @@ public class MapScreen extends Screen {
         }
         int captured = ChunkVaultClient.startRecording(ProjectMap.name());
         if (captured >= 0) {
-            com.chunkvault.state.AutoRecord.setWorld(com.chunkvault.state.AutoRecord.serverKey(), ProjectMap.name());
+            AutoRecord.setWorld(AutoRecord.serverKey(), ProjectMap.name());
             showToast(Lang.s("toast.started", captured));
         }
     }
 
-    /** Draws one top-bar button (white frame, coloured body); returns its right edge. */
     private int drawTopButton(GuiGraphicsExtractor g, int x0, String text, int bg, int bgHover,
                               int mouseX, int mouseY) {
         int x1 = x0 + this.font.width(text) + 14;
@@ -687,7 +616,6 @@ public class MapScreen extends Screen {
         scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale * (scrollY > 0 ? 1.25 : 0.8)));
         lastScale = scale;
 
-        // keep the block under the cursor where it was
         centerX = blockX - (mouseX - mapCX) / scale;
         centerZ = blockZ - (mouseY - mapCY) / scale;
         return true;
