@@ -4,7 +4,7 @@
   "version": "${version}",
   "name": "ChunkVault",
   "description": "Saves loaded chunks and opened container contents to a real world save as you play (26.2).",
-  "authors": ["you"],
+  "authors": ["biosanctuary"],
   "contact": {},
   "license": "MIT",
   "environment": "client",
