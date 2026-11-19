@@ -7,11 +7,9 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.network.chat.Component;
 
 import java.nio.file.Files;
 
-/** "Новый файл": asks for a name and creates an empty project (a folder in chunkvault/) that becomes the open one. */
 public class NewProjectScreen extends Screen {
 
     private static final int W = 320;
