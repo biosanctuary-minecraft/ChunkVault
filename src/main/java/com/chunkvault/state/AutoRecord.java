@@ -3,22 +3,18 @@ package com.chunkvault.state;
 import com.chunkvault.ChunkVaultClient;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ServerData;
 
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
+import java.io.OutputStreamWriter;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Locale;
 import java.util.Properties;
 
-/**
- * Per-server auto-record: for every server (or "singleplayer") remembers
- * whether recording should start by itself after joining, and into which
- * world folder. Stored in config/chunkvault-servers.properties as
- * "<server>.auto=true" and "<server>.world=<folder>".
- */
 public final class AutoRecord {
 
     private static final Properties PROPS = new Properties();
@@ -30,36 +26,14 @@ public final class AutoRecord {
 
     private AutoRecord() {}
 
-    // ------------------------------------------------------------------
-    // which server are we on
-    // ------------------------------------------------------------------
-
-    /** Address of the current server, lower-cased; "singleplayer" for a local world. */
     public static String serverKey() {
-        Object data = Minecraft.getInstance().getCurrentServer();
+        ServerData data = Minecraft.getInstance().getCurrentServer();
         if (data == null) {
             return "singleplayer";
         }
-        String ip = null;
-        try {
-            Field f = data.getClass().getField("ip");
-            Object v = f.get(data);
-            ip = v == null ? null : v.toString();
-        } catch (Throwable first) {
-            try {
-                Method m = data.getClass().getMethod("ip");
-                Object v = m.invoke(data);
-                ip = v == null ? null : v.toString();
-            } catch (Throwable ignored) {
-                // fall through to the generic key
-            }
-        }
+        String ip = data.ip;
         return ip == null || ip.isBlank() ? "server" : ip.trim().toLowerCase(Locale.ROOT);
     }
-
-    // ------------------------------------------------------------------
-    // settings
-    // ------------------------------------------------------------------
 
     public static synchronized boolean isAuto(String key) {
         load();
@@ -72,7 +46,6 @@ public final class AutoRecord {
         save();
     }
 
-    /** World folder used for auto-record on this server (defaults to a name made from the address). */
     public static synchronized String worldFor(String key) {
         load();
         String w = PROPS.getProperty(key + ".world");
@@ -97,9 +70,9 @@ public final class AutoRecord {
         Path f = file();
         if (Files.isRegularFile(f)) {
             try (InputStream in = Files.newInputStream(f)) {
-                PROPS.load(new java.io.InputStreamReader(in, java.nio.charset.StandardCharsets.UTF_8));
+                PROPS.load(new InputStreamReader(in, StandardCharsets.UTF_8));
             } catch (Exception e) {
-                System.err.println("[ChunkVault] could not read " + f + ": " + e);
+                System.err.println("[ChunkVault] Failed to read " + f + ": " + e);
             }
         }
     }
@@ -109,19 +82,13 @@ public final class AutoRecord {
             Path f = file();
             Files.createDirectories(f.getParent());
             try (OutputStream out = Files.newOutputStream(f)) {
-                PROPS.store(new java.io.OutputStreamWriter(out, java.nio.charset.StandardCharsets.UTF_8),
-                        "ChunkVault: per-server auto-record");
+                PROPS.store(new OutputStreamWriter(out, StandardCharsets.UTF_8), "ChunkVault per-server auto-record");
             }
         } catch (Exception e) {
-            System.err.println("[ChunkVault] could not write server settings: " + e);
+            System.err.println("[ChunkVault] Failed to write server settings: " + e);
         }
     }
 
-    // ------------------------------------------------------------------
-    // the actual auto start, driven by the client tick
-    // ------------------------------------------------------------------
-
-    /** Called every client tick: a couple of seconds after joining a server with auto-record on, starts recording. */
     public static void tick() {
         Minecraft mc = Minecraft.getInstance();
         Object connection = mc.getConnection();
@@ -147,7 +114,7 @@ public final class AutoRecord {
             String world = worldFor(key);
             int captured = ChunkVaultClient.startRecording(world);
             if (captured >= 0) {
-                System.out.println("[ChunkVault] auto-record started for " + key + " -> " + world);
+                System.out.println("[ChunkVault] Auto-record started for " + key + " -> " + world);
             }
         }
     }
