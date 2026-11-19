@@ -1,11 +1,15 @@
 package com.chunkvault.save;
 
 import net.minecraft.SharedConstants;
+import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.registries.Registries;
-import net.minecraft.nbt.*;
-import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.LongArrayTag;
+import net.minecraft.nbt.NbtUtils;
+import net.minecraft.nbt.StringTag;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
@@ -18,51 +22,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.BiFunction;
 
-/**
- * Builds the CompoundTag for one chunk in the same shape the vanilla server
- * writes to region files (post-1.18 "new chunk format": section list with
- * block_states.palette / block_states.data, one compound per block entity).
- *
- * Known simplifications (fine for a "walk around and back it up" tool,
- * called out so nobody is surprised):
- *  - biomes are written as ONE uniform value per 16x16x16 section (sampled
- *    from a single point) instead of the real 4x4x4 resolution. Visual/
- *    spawn-table accuracy only, doesn't affect terrain or containers.
- *  - "isLightOn" is always written as 0 (false), so the client recomputes
- *    lighting the first time it loads the chunk instead of us having to
- *    reproduce the light engine's output.
- *  - Heightmaps are omitted; vanilla recalculates them lazily.
- */
 public final class ChunkNbtWriter {
 
-    // Fixed: WorldVersion and DataVersion are both records as of 1.21.6+,
-    // so the chain is dataVersion() -> version(), not getDataVersion().getVersion().
-    private static int currentDataVersion() {
-        return SharedConstants.getCurrentVersion().dataVersion().version();
-    }
+    private ChunkNbtWriter() {}
 
-    public static CompoundTag write(ClientLevel level, LevelChunk chunk) {
-        return write(level, chunk, null);
-    }
-
-    /**
-     * @param overrides optional: given a block entity position and the block entity itself, returns the
-     *                  saved tag to write INSTEAD of the client's (which has no chest contents), or null
-     */
     public static CompoundTag write(ClientLevel level, LevelChunk chunk,
                                     BiFunction<BlockPos, BlockEntity, CompoundTag> overrides) {
         CompoundTag root = new CompoundTag();
-        root.putInt("DataVersion", currentDataVersion());
-
-        // Fixed: ChunkPos.x/z are private now; use the x()/z() accessors.
+        root.putInt("DataVersion", SharedConstants.getCurrentVersion().dataVersion().version());
         root.putInt("xPos", chunk.getPos().x());
         root.putInt("zPos", chunk.getPos().z());
-        // Fixed: getMinSection() was renamed to getMinSectionY().
         root.putInt("yPos", chunk.getMinSectionY());
-
-        // CHECK: newer versions namespace the status id ("minecraft:full");
-        // older ones used the bare string "full". Try the bare form first if
-        // this doesn't load.
         root.putString("Status", "minecraft:full");
         root.putBoolean("isLightOn", false);
 
@@ -82,17 +52,13 @@ public final class ChunkNbtWriter {
         for (Map.Entry<BlockPos, BlockEntity> entry : chunk.getBlockEntities().entrySet()) {
             BlockEntity be = entry.getValue();
             try {
-                // CHECK: saveWithFullMetadata(HolderLookup.Provider) is the
-                // modern (1.20.5+) signature; older versions used a no-arg
-                // saveWithFullMetadata() or saveWithId().
                 CompoundTag tag = overrides == null ? null : overrides.apply(entry.getKey(), be);
                 if (tag == null) {
                     tag = be.saveWithFullMetadata(level.registryAccess());
                 }
                 blockEntities.add(tag);
             } catch (Throwable t) {
-                // Don't let one weird block entity abort the whole chunk save.
-                System.err.println("[ChunkVault] failed to save block entity at " + entry.getKey() + ": " + t);
+                System.err.println("[ChunkVault] Failed to serialize block entity at " + entry.getKey() + ": " + t);
             }
         }
         root.put("block_entities", blockEntities);
@@ -109,7 +75,6 @@ public final class ChunkNbtWriter {
     }
 
     private static CompoundTag writeBlockStates(LevelChunkSection section) {
-        // Collect the 4096 block states of this section and build a palette.
         Map<BlockState, Integer> paletteIndex = new LinkedHashMap<>();
         List<BlockState> palette = new ArrayList<>();
         int[] indices = new int[4096];
@@ -133,7 +98,6 @@ public final class ChunkNbtWriter {
         CompoundTag out = new CompoundTag();
         ListTag paletteTag = new ListTag();
         for (BlockState state : palette) {
-            // NbtUtils.writeBlockState produces the standard {Name, Properties} entry.
             paletteTag.add(NbtUtils.writeBlockState(state));
         }
         out.put("palette", paletteTag);
@@ -142,32 +106,23 @@ public final class ChunkNbtWriter {
             int bitsPerEntry = Math.max(4, 32 - Integer.numberOfLeadingZeros(palette.size() - 1));
             out.put("data", new LongArrayTag(packEntries(indices, bitsPerEntry)));
         }
-        // if palette.size() <= 1 the "data" tag is omitted entirely (vanilla convention).
 
         return out;
     }
 
     private static CompoundTag writeBiomes(ClientLevel level, LevelChunkSection section) {
-        // Simplification: one biome for the whole section, sampled at a quart-pos corner.
         Holder<Biome> biome = section.getNoiseBiome(0, 0, 0);
         CompoundTag out = new CompoundTag();
         ListTag paletteTag = new ListTag();
-        // Fixed: registryOrThrow(...) was renamed to lookupOrThrow(...).
         String key = level.registryAccess()
                 .lookupOrThrow(Registries.BIOME)
                 .getKey(biome.value())
                 .toString();
         paletteTag.add(StringTag.valueOf(key));
         out.put("palette", paletteTag);
-        // single-entry palette -> no "data" array needed.
         return out;
     }
 
-    /**
-     * Packs `values` (each < 2^bitsPerEntry) into longs, post-1.16 style:
-     * entries never span two longs, unused high bits in each long are left
-     * as zero padding.
-     */
     private static long[] packEntries(int[] values, int bitsPerEntry) {
         int entriesPerLong = 64 / bitsPerEntry;
         int longCount = (values.length + entriesPerLong - 1) / entriesPerLong;
@@ -181,6 +136,4 @@ public final class ChunkNbtWriter {
         }
         return out;
     }
-
-    private ChunkNbtWriter() {}
 }
