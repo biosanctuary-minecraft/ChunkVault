@@ -7,11 +7,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Properties;
 
-/**
- * Small persistent settings singleton, saved as a plain properties file at
- * config/chunkvault.properties. Deliberately not using Gson/JSON — one less
- * dependency to get a version mismatch on.
- */
 public final class ChunkVaultSettings {
 
     private static final ChunkVaultSettings INSTANCE = new ChunkVaultSettings();
@@ -82,7 +77,7 @@ public final class ChunkVaultSettings {
             useSeed = Boolean.parseBoolean(p.getProperty("useSeed", "false"));
             seed = Long.parseLong(p.getProperty("seed", "0"));
         } catch (Exception e) {
-            System.err.println("[ChunkVault] could not read settings, using defaults: " + e);
+            System.err.println("[ChunkVault] Failed to read settings, using defaults: " + e);
         }
     }
 
@@ -98,7 +93,7 @@ public final class ChunkVaultSettings {
                 p.store(out, "ChunkVault settings");
             }
         } catch (IOException e) {
-            System.err.println("[ChunkVault] could not save settings: " + e);
+            System.err.println("[ChunkVault] Failed to save settings: " + e);
         }
     }
 }
