@@ -10,8 +10,11 @@ import net.minecraft.core.Direction;
 import net.minecraft.world.Container;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ChestMenu;
+import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.ChestBlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.ChestType;
 import net.minecraft.world.level.chunk.LevelChunk;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -20,19 +23,19 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * CHECK: this only handles ChestMenu (chests, trapped chests, ender-chest-
- * style single containers). Barrels/hoppers/dispensers/shulker boxes use
- * their own Menu subclasses in vanilla (GenericContainerMenu isn't actually
- * used by them the way it is in some mod frameworks) — if you want those
- * captured too, add an `instanceof` branch per menu type the same way the
- * ChestMenu one works below; the copy-into-BlockEntity logic is identical,
- * only the menu class and expected slot count differ.
+ * Captures the contents of a chest when its screen is closed.
  *
- * Double chests: vanilla stores them as two separate 27-slot ChestBlockEntity
- * instances combined into one 54-slot view. We do a best-effort split here;
- * which half gets the first 27 slots vs the last 27 is NOT guaranteed to
- * match vanilla's internal left/right ordering. Fine for a backup (nothing
- * is lost), just don't assume slot 0 is always the same physical corner.
+ * ChestMenu is used by chests, trapped chests AND barrels. Other containers
+ * (shulker boxes, hoppers, dispensers, furnaces...) use their own menu
+ * classes and are not captured yet.
+ *
+ * The items are copied into the client's block entity and then stored by
+ * WorldSaveManager#rememberContainer, which makes every later save of that
+ * chunk include them (the client never gets chest contents from the server,
+ * so a plain re-save of the chunk would write empty chests).
+ *
+ * Double chests: vanilla's 54-slot view is [RIGHT half (27 slots)] followed by
+ * [LEFT half (27 slots)], so each half is written to its own block entity.
  */
 @Mixin(AbstractContainerScreen.class)
 public abstract class ContainerCaptureMixin {
@@ -45,6 +48,16 @@ public abstract class ContainerCaptureMixin {
 
     @Inject(method = "removed", at = @At("HEAD"))
     private void chunkvault$onContainerClosed(CallbackInfo ci) {
+        try {
+            chunkvault$capture();
+        } catch (Throwable t) {
+            // never break closing a screen because of a recording problem
+            System.err.println("[ChunkVault] chest capture failed: " + t);
+            t.printStackTrace();
+        }
+    }
+
+    private void chunkvault$capture() {
         if (!RecordingState.get().isActive()) {
             return;
         }
@@ -58,7 +71,8 @@ public abstract class ContainerCaptureMixin {
 
         Minecraft client = Minecraft.getInstance();
         ClientLevel level = client.level;
-        if (level == null) {
+        var manager = RecordingState.get().saveManager();
+        if (level == null || manager == null) {
             return;
         }
 
@@ -69,22 +83,36 @@ public abstract class ContainerCaptureMixin {
         if (!(primary instanceof Container primaryContainer)) {
             return;
         }
+        int half = primaryContainer.getContainerSize(); // 27 for a chest / barrel
 
-        if (sourceSize <= primaryContainer.getContainerSize()) {
+        if (sourceSize <= half) {
+            // single chest or barrel
             copyItems(source, 0, primaryContainer, 0, sourceSize);
+            manager.rememberContainer(level, primary);
         } else {
-            // Likely a double chest (54 slots) split across two BlockEntities.
-            int half = primaryContainer.getContainerSize(); // usually 27
-            copyItems(source, 0, primaryContainer, 0, half);
-
-            BlockEntity neighbor = findChestNeighbor(level, pos);
-            if (neighbor instanceof Container neighborContainer) {
-                copyItems(source, half, neighborContainer, 0, sourceSize - half);
-                resaveChunkContaining(level, neighbor.getBlockPos());
+            // double chest: find the other half
+            BlockState state = level.getBlockState(pos);
+            BlockPos otherPos = findOtherHalf(level, state, pos);
+            BlockEntity other = otherPos == null ? null : level.getBlockEntity(otherPos);
+            if (other instanceof Container otherContainer) {
+                // the RIGHT half holds the first 27 slots, the LEFT half the last 27
+                boolean primaryIsFirst = !(state.getBlock() instanceof ChestBlock)
+                        || state.getValue(ChestBlock.TYPE) == ChestType.RIGHT;
+                BlockEntity firstBe = primaryIsFirst ? primary : other;
+                BlockEntity secondBe = primaryIsFirst ? other : primary;
+                copyItems(source, 0, (Container) firstBe, 0, half);
+                copyItems(source, half, (Container) secondBe, 0, sourceSize - half);
+                manager.rememberContainer(level, firstBe);
+                manager.rememberContainer(level, secondBe);
+                resaveChunkContaining(level, otherPos);
+            } else {
+                // other half not found: keep at least the first 27 slots
+                copyItems(source, 0, primaryContainer, 0, half);
+                manager.rememberContainer(level, primary);
             }
         }
 
-        RecordingState.get().saveManager().notifyChestCaptured();
+        manager.notifyChestCaptured();
         resaveChunkContaining(level, pos);
     }
 
@@ -94,12 +122,16 @@ public abstract class ContainerCaptureMixin {
         }
     }
 
-    private static BlockEntity findChestNeighbor(ClientLevel level, BlockPos pos) {
+    /** Position of the second chest of a double chest (null if it is not one). */
+    private static BlockPos findOtherHalf(ClientLevel level, BlockState state, BlockPos pos) {
+        if (state.getBlock() instanceof ChestBlock && state.getValue(ChestBlock.TYPE) != ChestType.SINGLE) {
+            return pos.relative(ChestBlock.getConnectedDirection(state));
+        }
+        // fallback: any chest standing right next to it
         for (Direction dir : Direction.Plane.HORIZONTAL) {
             BlockPos neighborPos = pos.relative(dir);
-            BlockEntity be = level.getBlockEntity(neighborPos);
-            if (be instanceof ChestBlockEntity) {
-                return be;
+            if (level.getBlockEntity(neighborPos) instanceof ChestBlockEntity) {
+                return neighborPos;
             }
         }
         return null;
