@@ -3,36 +3,27 @@ package com.chunkvault.gui;
 import com.chunkvault.Lang;
 import com.chunkvault.state.AutoRecord;
 import com.chunkvault.state.ChunkVaultSettings;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 
-/**
- * /chunkvault settings — every toggle is a plain Button whose label shows
- * the current state and flips it on click, rather than a Checkbox widget:
- * Button.builder(...).bounds(...).build() is confirmed working unchanged in
- * 26.2, Checkbox's constructor for this version was not confirmed anywhere
- * I could find, so this sidesteps that risk entirely.
- */
 public class SettingsScreen extends Screen {
 
     private static final int ROW_H = 24;
     private static final int WIDTH = 360;
-    /** Extra vertical gap before the seed box, so its caption does not overlap the button above. */
     private static final int SEED_GAP = 14;
 
     private EditBox seedBox;
     private final String serverKey = AutoRecord.serverKey();
-
     private final Screen parent;
 
     public SettingsScreen() {
         this(null);
     }
 
-    /** @param parent screen to go back to when closed (null = back to the game) */
     public SettingsScreen(Screen parent) {
         super(Lang.c("settings.title"));
         this.parent = parent;
@@ -41,7 +32,7 @@ public class SettingsScreen extends Screen {
     @Override
     public void onClose() {
         if (parent != null) {
-            net.minecraft.client.Minecraft.getInstance().setScreenAndShow(parent);
+            Minecraft.getInstance().setScreenAndShow(parent);
         } else {
             super.onClose();
         }
@@ -138,7 +129,6 @@ public class SettingsScreen extends Screen {
             long seed = text.isEmpty() ? 0L : Long.parseLong(text);
             ChunkVaultSettings.get().setSeed(seed);
         } catch (NumberFormatException ignored) {
-            // leave the previously saved seed untouched on bad input
         }
     }
 
@@ -149,9 +139,7 @@ public class SettingsScreen extends Screen {
 
         int x = (this.width - WIDTH) / 2;
         g.text(this.font, Lang.s("settings.seed_label"), x, 40 + ROW_H * 4 + SEED_GAP - 11, 0xFFAAAAAA, true);
-        g.text(this.font,
-                Lang.s("settings.seed_note"),
-                x, this.height - 20, 0xFF808080, true);
+        g.text(this.font, Lang.s("settings.seed_note"), x, this.height - 20, 0xFF808080, true);
 
         super.extractRenderState(g, mouseX, mouseY, partialTick);
     }
