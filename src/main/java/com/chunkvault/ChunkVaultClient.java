@@ -1,38 +1,55 @@
 package com.chunkvault;
 
+import com.chunkvault.gui.MapCache;
+import com.chunkvault.gui.MapScreen;
+import com.chunkvault.gui.ProjectMap;
+import com.chunkvault.gui.SettingsScreen;
+import com.chunkvault.save.PlayerDataWriter;
+import com.chunkvault.save.VoidWorldGenBuilder;
+import com.chunkvault.state.AutoRecord;
 import com.chunkvault.state.RecordingState;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.chunk.EmptyLevelChunk;
+import net.minecraft.world.level.chunk.LevelChunk;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.UUID;
 
-// CHECK fixed: ClientCommandManager was renamed to ClientCommands in 26.2
-// (per Fabric's own porting guide).
 import static net.fabricmc.fabric.api.client.command.v2.ClientCommands.argument;
 import static net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal;
 
 public class ChunkVaultClient implements ClientModInitializer {
 
+    public record StopResult(int chunks, int chests, int entities, Path dir) {}
+
+    private static volatile boolean openMapNextTick;
+    private static volatile boolean openSettingsNextTick;
+    private static int tickCounter;
+
     @Override
     public void onInitializeClient() {
-        net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.END_CLIENT_TICK.register(client -> {
-            com.chunkvault.state.AutoRecord.tick();
-            com.chunkvault.gui.ProjectMap.tick();
+        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            AutoRecord.tick();
+            ProjectMap.tick();
             if (openMapNextTick) {
                 openMapNextTick = false;
-                Minecraft.getInstance().setScreenAndShow(new com.chunkvault.gui.MapScreen());
+                Minecraft.getInstance().setScreenAndShow(new MapScreen());
             }
             if (openSettingsNextTick) {
                 openSettingsNextTick = false;
-                Minecraft.getInstance().setScreenAndShow(new com.chunkvault.gui.SettingsScreen());
+                Minecraft.getInstance().setScreenAndShow(new SettingsScreen());
             }
 
-            // While recording, sample entities (mobs, dropped items, frames...) every 2 seconds.
             if (++tickCounter % 40 == 0 && RecordingState.get().isActive()) {
                 var manager = RecordingState.get().saveManager();
                 var level = Minecraft.getInstance().level;
@@ -58,30 +75,102 @@ public class ChunkVaultClient implements ClientModInitializer {
         );
     }
 
-    /**
-     * Rewrites data/minecraft/world_gen_settings.dat inside an ALREADY
-     * recorded world (in saves/<name> and/or chunkvault/<name>), so worlds
-     * recorded with the earlier broken file format open without re-recording.
-     * Needs to be run while connected to any server/world (a live level is
-     * required to build the void dimension config from the game's own classes).
-     */
+    public static int startRecording(String name) {
+        Path gameDir = FabricLoader.getInstance().getGameDir();
+        if (!RecordingState.get().start(gameDir, name)) {
+            return -1;
+        }
+        ProjectMap.ensureOpen(RecordingState.sanitize(name));
+        var level = Minecraft.getInstance().level;
+        if (level != null) {
+            try {
+                var worldGen = VoidWorldGenBuilder.build(level);
+                VoidWorldGenBuilder.writeToWorld(RecordingState.get().saveManager().rootDir(), worldGen);
+            } catch (Exception e) {
+                System.err.println("[ChunkVault] Failed to build world_gen_settings.dat: " + e);
+            }
+        }
+        return snapshotAlreadyLoadedChunks();
+    }
+
+    public static StopResult stopRecording() {
+        if (!RecordingState.get().isActive()) {
+            return null;
+        }
+        var manager = RecordingState.get().saveManager();
+        var player = Minecraft.getInstance().player;
+        var level = Minecraft.getInstance().level;
+        if (level != null) {
+            manager.snapshotEntities(level);
+        }
+        int chunks = manager.chunksSaved();
+        int chests = manager.chestsSeen();
+        int entities = manager.entitiesSeen();
+
+        UUID uuid = null;
+        CompoundTag playerTag = null;
+        boolean inOverworld = level != null && level.dimension().equals(Level.OVERWORLD);
+        var spawnPos = (player != null && inOverworld) ? player.blockPosition() : null;
+
+        if (player != null && level != null) {
+            uuid = Minecraft.getInstance().getUser().getProfileId();
+            playerTag = PlayerDataWriter.buildPlayerTag(
+                    player.getX(), player.getY(), player.getZ(),
+                    player.getYRot(), player.getXRot(),
+                    level.dimension().identifier().toString());
+        }
+
+        Path dir = RecordingState.get().stop(spawnPos, uuid, playerTag);
+        ProjectMap.save();
+        return new StopResult(chunks, chests, entities, dir);
+    }
+
+    private static int snapshotAlreadyLoadedChunks() {
+        var level = Minecraft.getInstance().level;
+        var player = Minecraft.getInstance().player;
+        var manager = RecordingState.get().saveManager();
+        if (level == null || player == null || manager == null) {
+            return 0;
+        }
+        int centerX = player.blockPosition().getX() >> 4;
+        int centerZ = player.blockPosition().getZ() >> 4;
+        int radius = Minecraft.getInstance().options.renderDistance().get() + 2;
+        int count = 0;
+        String dimensionId = level.dimension().identifier().toString();
+        for (int dx = -radius; dx <= radius; dx++) {
+            for (int dz = -radius; dz <= radius; dz++) {
+                int cx = centerX + dx;
+                int cz = centerZ + dz;
+                var chunk = level.getChunk(cx, cz);
+                if (chunk instanceof LevelChunk levelChunk && !(chunk instanceof EmptyLevelChunk)) {
+                    MapCache.update(level, levelChunk);
+                    manager.saveChunk(level, levelChunk);
+                    ProjectMap.onChunkRecorded(dimensionId, cx, cz);
+                    count++;
+                }
+            }
+        }
+        return count;
+    }
+
     private int fixWorld(FabricClientCommandSource source, String name) {
         var level = Minecraft.getInstance().level;
         if (level == null) {
-            source.sendFeedback(Component.literal(
-                    "§c[ChunkVault] " + Lang.s("cmd.need_world")));
+            source.sendFeedback(Component.literal("§c[ChunkVault] " + Lang.s("cmd.need_world")));
             return 0;
         }
         Path gameDir = FabricLoader.getInstance().getGameDir();
-        Path inSaves = gameDir.resolve("saves").resolve(name);
-        Path inVault = gameDir.resolve("chunkvault").resolve(name);
+        Path[] targets = {
+                gameDir.resolve("saves").resolve(name),
+                gameDir.resolve("chunkvault").resolve(name)
+        };
 
         int fixed = 0;
         try {
-            var settings = com.chunkvault.save.VoidWorldGenBuilder.build(level);
-            for (Path target : new Path[]{inSaves, inVault}) {
-                if (java.nio.file.Files.isDirectory(target)) {
-                    com.chunkvault.save.VoidWorldGenBuilder.writeToWorld(target, settings);
+            var settings = VoidWorldGenBuilder.build(level);
+            for (Path target : targets) {
+                if (Files.isDirectory(target)) {
+                    VoidWorldGenBuilder.writeToWorld(target, settings);
                     fixed++;
                     source.sendFeedback(Component.literal("§a[ChunkVault] " + Lang.s("cmd.fixed", target.toString())));
                 }
@@ -91,22 +180,13 @@ public class ChunkVaultClient implements ClientModInitializer {
             return 0;
         }
         if (fixed == 0) {
-            source.sendFeedback(Component.literal(
-                    "§c[ChunkVault] " + Lang.s("cmd.world_not_found", name)));
+            source.sendFeedback(Component.literal("§c[ChunkVault] " + Lang.s("cmd.world_not_found", name)));
             return 0;
         }
         return 1;
     }
 
-    // The command runs from inside ChatScreen's key handler, and ChatScreen
-    // calls setScreen(null) on itself right AFTER the command returns — which
-    // instantly closed any screen we opened from the command (the map
-    // "flashed and vanished"). So the command only raises this flag, and the
-    // screen is opened from the next client tick, once chat is already gone.
-    private static volatile boolean openMapNextTick = false;
-    private static volatile boolean openSettingsNextTick = false;
-    private static int tickCounter = 0;
-
+    // ChatScreen closes itself right after command execution, so open screens on the next tick.
     private int map(FabricClientCommandSource source) {
         openMapNextTick = true;
         return 1;
@@ -115,33 +195,6 @@ public class ChunkVaultClient implements ClientModInitializer {
     private int settings(FabricClientCommandSource source) {
         openSettingsNextTick = true;
         return 1;
-    }
-
-    /**
-     * Starts a recording (shared by /chunkvault start and the map's record button).
-     * @return number of already-loaded chunks captured immediately, or -1 if a recording is already running
-     */
-    public static int startRecording(String name) {
-        Path gameDir = FabricLoader.getInstance().getGameDir();
-        boolean started = RecordingState.get().start(gameDir, name);
-        if (!started) {
-            return -1;
-        }
-        com.chunkvault.gui.ProjectMap.ensureOpen(RecordingState.sanitize(name));
-        var level = Minecraft.getInstance().level;
-        if (level != null) {
-            try {
-                var worldGen = com.chunkvault.save.VoidWorldGenBuilder.build(level);
-                com.chunkvault.save.VoidWorldGenBuilder.writeToWorld(
-                        RecordingState.get().saveManager().rootDir(), worldGen);
-            } catch (Exception e) {
-                System.err.println("[ChunkVault] could not build void world-gen settings, " +
-                        "will fall back to copying from an existing world at stop time: " + e);
-            }
-        }
-        int captured = snapshotAlreadyLoadedChunks();
-        com.chunkvault.gui.MapCache.bumpTint();
-        return captured;
     }
 
     private int start(FabricClientCommandSource source, String name) {
@@ -156,87 +209,6 @@ public class ChunkVaultClient implements ClientModInitializer {
         return 1;
     }
 
-    /**
-     * Fix for the "donut hole" bug: the chunk-packet mixin only ever sees
-     * chunks that arrive AFTER recording starts. Any chunk the client
-     * already had loaded before /chunkvault start (which, in practice, is
-     * everywhere immediately around the player — they were already
-     * standing there) never triggers a new packet and so was silently
-     * never captured, leaving exactly the area the player cares about
-     * empty. This walks every chunk position the client currently has
-     * loaded within render distance and saves it immediately, on top of
-     * whatever new packets arrive from here on.
-     */
-    private static int snapshotAlreadyLoadedChunks() {
-        var level = Minecraft.getInstance().level;
-        var player = Minecraft.getInstance().player;
-        var manager = RecordingState.get().saveManager();
-        if (level == null || player == null || manager == null) {
-            return 0;
-        }
-        int centerX = player.blockPosition().getX() >> 4;
-        int centerZ = player.blockPosition().getZ() >> 4;
-        int radius = Minecraft.getInstance().options.renderDistance().get() + 2;
-        int count = 0;
-        for (int dx = -radius; dx <= radius; dx++) {
-            for (int dz = -radius; dz <= radius; dz++) {
-                int cx = centerX + dx;
-                int cz = centerZ + dz;
-                var chunk = level.getChunk(cx, cz);
-                // EmptyLevelChunk is the placeholder for chunks that never arrived: never save those
-                if (chunk instanceof net.minecraft.world.level.chunk.LevelChunk levelChunk
-                        && !(chunk instanceof net.minecraft.world.level.chunk.EmptyLevelChunk)) {
-                    com.chunkvault.gui.MapCache.update(level, levelChunk);
-                    manager.saveChunk(level, levelChunk);
-                    com.chunkvault.gui.ProjectMap.onChunkRecorded(level.dimension().identifier().toString(), cx, cz);
-                    count++;
-                }
-            }
-        }
-        return count;
-    }
-
-    /** Result of a finished recording (used by both /chunkvault stop and the map's stop button). */
-    public record StopResult(int chunks, int chests, int entities, Path dir) {}
-
-    /** Stops the running recording and writes the world out. Returns null if nothing was recording. */
-    public static StopResult stopRecording() {
-        if (!RecordingState.get().isActive()) {
-            return null;
-        }
-        var manager = RecordingState.get().saveManager();
-        var player = Minecraft.getInstance().player;
-        var level = Minecraft.getInstance().level;
-        if (level != null) {
-            manager.snapshotEntities(level); // last look at the entities before writing them out
-        }
-        int chunks = manager.chunksSaved();
-        int chests = manager.chestsSeen();
-        int entities = manager.entitiesSeen();
-
-        java.util.UUID uuid = null;
-        net.minecraft.nbt.CompoundTag playerTag = null;
-        // level.dat's SpawnX/Y/Z only ever addresses the Overworld anyway,
-        // so the real fix for "spawn where I stopped, in whatever dimension"
-        // is writing actual player-position data (see PlayerDataWriter) —
-        // this works for every dimension, not just the Overworld.
-        boolean inOverworld = level != null && level.dimension().equals(net.minecraft.world.level.Level.OVERWORLD);
-        var spawnPos = (player != null && inOverworld) ? player.blockPosition() : null;
-
-        if (player != null && level != null) {
-            uuid = Minecraft.getInstance().getUser().getProfileId();
-            playerTag = com.chunkvault.save.PlayerDataWriter.buildPlayerTag(
-                    uuid, player.getX(), player.getY(), player.getZ(),
-                    player.getYRot(), player.getXRot(),
-                    level.dimension().identifier().toString());
-        }
-
-        Path dir = RecordingState.get().stop(spawnPos, uuid, playerTag);
-        com.chunkvault.gui.ProjectMap.save();
-        com.chunkvault.gui.MapCache.bumpTint();
-        return new StopResult(chunks, chests, entities, dir);
-    }
-
     private int stop(FabricClientCommandSource source) {
         StopResult result = stopRecording();
         if (result == null) {
@@ -245,8 +217,7 @@ public class ChunkVaultClient implements ClientModInitializer {
         }
         source.sendFeedback(Component.literal(
                 "§a[ChunkVault] " + Lang.s("cmd.done", result.chunks(), result.chests(), result.entities(), result.dir().toString())));
-        source.sendFeedback(Component.literal(
-                "§b[ChunkVault] " + Lang.s("cmd.hint_spawn")));
+        source.sendFeedback(Component.literal("§b[ChunkVault] " + Lang.s("cmd.hint_spawn")));
         return 1;
     }
 
@@ -257,7 +228,11 @@ public class ChunkVaultClient implements ClientModInitializer {
         }
         var manager = RecordingState.get().saveManager();
         source.sendFeedback(Component.literal(
-                "§b[ChunkVault] " + Lang.s("cmd.status", RecordingState.get().sessionName(), manager.chunksSaved(), manager.chestsSeen(), manager.entitiesSeen())));
+                "§b[ChunkVault] " + Lang.s("cmd.status",
+                        RecordingState.get().sessionName(),
+                        manager.chunksSaved(),
+                        manager.chestsSeen(),
+                        manager.entitiesSeen())));
         return 1;
     }
 }
