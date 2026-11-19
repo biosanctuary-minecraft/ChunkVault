@@ -16,10 +16,11 @@
 ## How to use
 
 1. Join a server or world.
-2. Run `/chunkvault map` and click **NEW FILE** to create a project, then **RECORD**, or run `/chunkvault start <name>`.
-3. Explore. Open the containers you want saved.
+2. Run `/chunkvault map` and click **NEW FILE** to create a project, then **RECORD** (or run `/chunkvault start <name>`).
+3. Explore and open any containers you want saved.
 4. Press **STOP** or run `/chunkvault stop`.
-5. Open the world from your singleplayer list.
+5. Click **OPEN** on the map screen and hit **Copy to saves** (or copy the folder manually from `.minecraft/chunkvault/` to `.minecraft/saves/`).
+6. Open the world from your singleplayer list.
 
 ## Commands
 
