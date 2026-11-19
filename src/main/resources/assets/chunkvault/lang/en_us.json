@@ -72,5 +72,6 @@
   "chunkvault.cmd.done": "Done: %s chunks, %s containers, %s entities. Saved to: %s",
   "chunkvault.cmd.hint_spawn": "When you join this world, you should appear where you stopped recording.",
   "chunkvault.cmd.inactive": "Not active.",
-  "chunkvault.cmd.status": "Recording \"%s\": %s chunks, %s containers, %s entities."
+  "chunkvault.cmd.status": "Recording \"%s\": %s chunks, %s containers, %s entities.",
+  "chunkvault.chest.saved": "Container saved: %s at X: %s Y: %s Z: %s (slots filled: %s of %s)"
 }
