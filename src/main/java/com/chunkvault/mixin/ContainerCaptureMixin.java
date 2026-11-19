@@ -9,7 +9,15 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.Container;
 import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.inventory.AbstractFurnaceMenu;
+import net.minecraft.world.inventory.BrewingStandMenu;
 import net.minecraft.world.inventory.ChestMenu;
+import net.minecraft.world.inventory.CrafterMenu;
+import net.minecraft.world.inventory.DispenserMenu;
+import net.minecraft.world.inventory.HopperMenu;
+import net.minecraft.world.inventory.ShulkerBoxMenu;
+import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.ChestBlockEntity;
@@ -25,9 +33,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 /**
  * Captures the contents of a chest when its screen is closed.
  *
- * ChestMenu is used by chests, trapped chests AND barrels. Other containers
- * (shulker boxes, hoppers, dispensers, furnaces...) use their own menu
- * classes and are not captured yet.
+ * Supported windows: chests, trapped chests, barrels (ChestMenu), shulker
+ * boxes, hoppers, dispensers/droppers, furnaces/blast furnaces/smokers,
+ * brewing stands and crafters. The items of the window are copied into the
+ * block entity that was right-clicked.
  *
  * The items are copied into the client's block entity and then stored by
  * WorldSaveManager#rememberContainer, which makes every later save of that
@@ -65,9 +74,11 @@ public abstract class ContainerCaptureMixin {
         if (pos == null) {
             return;
         }
-        if (!(this.menu instanceof ChestMenu chestMenu)) {
+        if (!isSupportedMenu(this.menu)) {
             return;
         }
+        // consumed: a later window opened some other way must not reuse this position
+        LastInteraction.set(null);
 
         Minecraft client = Minecraft.getInstance();
         ClientLevel level = client.level;
@@ -76,7 +87,10 @@ public abstract class ContainerCaptureMixin {
             return;
         }
 
-        Container source = chestMenu.getContainer();
+        Container source = sourceContainer(this.menu);
+        if (source == null) {
+            return;
+        }
         int sourceSize = source.getContainerSize();
 
         BlockEntity primary = level.getBlockEntity(pos);
@@ -84,14 +98,14 @@ public abstract class ContainerCaptureMixin {
             return;
         }
         int half = primaryContainer.getContainerSize(); // 27 for a chest / barrel
+        BlockState state = level.getBlockState(pos);
 
-        if (sourceSize <= half) {
-            // single chest or barrel
-            copyItems(source, 0, primaryContainer, 0, sourceSize);
+        if (sourceSize <= half || !(state.getBlock() instanceof ChestBlock)) {
+            // single chest, barrel, shulker box, furnace, hopper, ...
+            copyItems(source, 0, primaryContainer, 0, Math.min(sourceSize, half));
             manager.rememberContainer(level, primary);
         } else {
             // double chest: find the other half
-            BlockState state = level.getBlockState(pos);
             BlockPos otherPos = findOtherHalf(level, state, pos);
             BlockEntity other = otherPos == null ? null : level.getBlockEntity(otherPos);
             if (other instanceof Container otherContainer) {
@@ -118,8 +132,36 @@ public abstract class ContainerCaptureMixin {
 
     private static void copyItems(Container from, int fromStart, Container to, int toStart, int count) {
         for (int i = 0; i < count; i++) {
-            to.setItem(toStart + i, from.getItem(fromStart + i).copy());
+            try {
+                to.setItem(toStart + i, from.getItem(fromStart + i).copy());
+            } catch (Throwable t) {
+                // some block entities (furnaces...) do extra work in setItem; never let that stop the copy
+                System.err.println("[ChunkVault] could not set slot " + (toStart + i) + ": " + t);
+            }
         }
+    }
+
+    private static boolean isSupportedMenu(AbstractContainerMenu m) {
+        return m instanceof ChestMenu
+                || m instanceof ShulkerBoxMenu
+                || m instanceof HopperMenu
+                || m instanceof DispenserMenu
+                || m instanceof AbstractFurnaceMenu
+                || m instanceof BrewingStandMenu
+                || m instanceof CrafterMenu;
+    }
+
+    /** The container that holds the window's own slots (everything except the player's inventory). */
+    private static Container sourceContainer(AbstractContainerMenu m) {
+        if (m instanceof ChestMenu chestMenu) {
+            return chestMenu.getContainer();
+        }
+        for (Slot slot : m.slots) {
+            if (!(slot.container instanceof Inventory)) {
+                return slot.container;
+            }
+        }
+        return null;
     }
 
     /** Position of the second chest of a double chest (null if it is not one). */
