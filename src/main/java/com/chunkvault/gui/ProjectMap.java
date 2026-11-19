@@ -18,18 +18,9 @@ import java.util.stream.Stream;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
-/**
- * The currently open project (a folder inside chunkvault/) and the chunk
- * pictures the map shows for it. Like a document in an editor: the map shows
- * what the project contains; recording adds to it.
- *
- * The pictures are kept next to the world in chunkvault/&lt;project&gt;/chunkvault_map/
- * (one small gzip file per dimension), written when a recording stops and
- * every ~30 s during one, and read back when the project is opened.
- */
 public final class ProjectMap {
 
-    private static final int MAGIC = 0x43564D31; // "CVM1"
+    private static final int MAGIC = 0x43564D31; // CVM1
 
     private static volatile String name;
     private static final Map<String, Map<Long, MapCache.ChunkColors>> CHUNKS = new ConcurrentHashMap<>();
@@ -54,7 +45,6 @@ public final class ProjectMap {
         return name;
     }
 
-    /** Changes whenever a project is opened/closed, so the map textures start over. */
     public static int sessionCounter() {
         return session;
     }
@@ -71,11 +61,6 @@ public final class ProjectMap {
         return REGION_KEYS.computeIfAbsent(dimensionId, k -> ConcurrentHashMap.newKeySet());
     }
 
-    // ------------------------------------------------------------------
-    // open / create / close
-    // ------------------------------------------------------------------
-
-    /** Creates an empty project folder and opens it. @return false if a folder with that name already exists */
     public static boolean createNew(String folder) {
         Path dir = root().resolve(folder);
         if (Files.exists(dir)) {
@@ -84,28 +69,28 @@ public final class ProjectMap {
         try {
             Files.createDirectories(dir);
         } catch (IOException e) {
-            System.err.println("[ChunkVault] could not create " + dir + ": " + e);
+            System.err.println("[ChunkVault] Failed to create " + dir + ": " + e);
             return false;
         }
         open(folder);
         return true;
     }
 
-    /** Opens an existing project folder: the map now shows everything saved in it. */
     public static void open(String folder) {
-        if (name != null) {
-            save();
+        synchronized (SAVE_LOCK) {
+            if (name != null) {
+                save();
+            }
+            CHUNKS.clear();
+            DIRTY.clear();
+            REGION_KEYS.clear();
+            session++;
+            name = folder;
+            storeDirty = false;
+            load(root().resolve(folder).resolve("chunkvault_map"));
         }
-        CHUNKS.clear();
-        DIRTY.clear();
-        REGION_KEYS.clear();
-        session++;
-        name = folder;
-        storeDirty = false;
-        load(root().resolve(folder).resolve("chunkvault_map"));
     }
 
-    /** Makes sure this project is the open one (used when a recording starts by command or auto-record). */
     public static void ensureOpen(String folder) {
         if (!folder.equals(name)) {
             open(folder);
@@ -113,21 +98,18 @@ public final class ProjectMap {
     }
 
     public static void close() {
-        if (name != null) {
-            save();
+        synchronized (SAVE_LOCK) {
+            if (name != null) {
+                save();
+            }
+            CHUNKS.clear();
+            DIRTY.clear();
+            REGION_KEYS.clear();
+            session++;
+            name = null;
         }
-        CHUNKS.clear();
-        DIRTY.clear();
-        REGION_KEYS.clear();
-        session++;
-        name = null;
     }
 
-    // ------------------------------------------------------------------
-    // recording feeds the project
-    // ------------------------------------------------------------------
-
-    /** A chunk was just saved by the recording: show it (colours come from the live MapCache). */
     public static void onChunkRecorded(String dimensionId, int cx, int cz) {
         if (name == null) {
             return;
@@ -143,7 +125,6 @@ public final class ProjectMap {
         storeDirty = true;
     }
 
-    /** Called every client tick: writes the map files in the background every ~30 s while a recording adds chunks. */
     public static void tick() {
         if (name == null || !storeDirty) {
             return;
@@ -155,10 +136,6 @@ public final class ProjectMap {
         t.setDaemon(true);
         t.start();
     }
-
-    // ------------------------------------------------------------------
-    // disk
-    // ------------------------------------------------------------------
 
     private static String fileFor(String dimensionId) {
         return dimensionId.replace(':', '_').replace('/', '_') + ".cvm";
@@ -180,7 +157,7 @@ public final class ProjectMap {
                 }
                 storeDirty = false;
             } catch (Exception ex) {
-                System.err.println("[ChunkVault] could not save the map of " + project + ": " + ex);
+                System.err.println("[ChunkVault] Failed to save map for " + project + ": " + ex);
             }
         }
     }
@@ -215,7 +192,7 @@ public final class ProjectMap {
                 }
             }
         } catch (Exception e) {
-            System.err.println("[ChunkVault] could not read the map files in " + dir + ": " + e);
+            System.err.println("[ChunkVault] Failed to read map directory " + dir + ": " + e);
         }
     }
 
@@ -243,7 +220,7 @@ public final class ProjectMap {
                 regions.add(MapCache.key(cx >> 4, cz >> 4));
             }
         } catch (Exception e) {
-            System.err.println("[ChunkVault] bad map file " + file + ": " + e);
+            System.err.println("[ChunkVault] Failed to read map file " + file + ": " + e);
         }
     }
 }
