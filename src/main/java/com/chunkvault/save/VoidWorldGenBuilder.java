@@ -1,5 +1,6 @@
 package com.chunkvault.save;
 
+import com.chunkvault.state.ChunkVaultSettings;
 import com.mojang.serialization.DataResult;
 import net.minecraft.SharedConstants;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -17,12 +18,11 @@ import net.minecraft.world.level.biome.Biomes;
 import net.minecraft.world.level.dimension.BuiltinDimensionTypes;
 import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.level.dimension.LevelStem;
-import net.minecraft.world.level.levelgen.WorldDimensions;
 import net.minecraft.world.level.levelgen.FlatLevelSource;
+import net.minecraft.world.level.levelgen.WorldDimensions;
 import net.minecraft.world.level.levelgen.flat.FlatLevelGeneratorSettings;
 import net.minecraft.world.level.levelgen.presets.WorldPreset;
 import net.minecraft.world.level.levelgen.presets.WorldPresets;
-import com.chunkvault.state.ChunkVaultSettings;
 
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -35,56 +35,23 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.zip.GZIPOutputStream;
 
-/**
- * Builds a real Void-preset world's dimension config entirely in code, using
- * the game's own FlatLevelGeneratorSettings/LevelStem/WorldDimensions classes
- * and their Codecs, instead of hand-typing the NBT and instead of asking the
- * player to create a template world once. The actual byte layout comes from
- * real game logic that already knows the correct schema for this version.
- *
- * All three dimensions get the same flat generator: no layers, biome
- * "the_void" — meaning nothing generates anywhere we haven't explicitly
- * recorded a chunk, matching a real superflat "The Void" preset exactly.
- *
- * CHECK: this is the least-tested corner of the whole mod. The shapes below
- * (FlatLevelGeneratorSettings/LevelStem/WorldDimensions constructors,
- * BuiltinDimensionTypes' field names) reflect how flat-world generation has
- * worked since roughly 1.19-1.21 and this general area hasn't churned as
- * much as e.g. ChunkPos or WorldVersion did — but a follow-up compile fix
- * here would not be surprising, same as everywhere else in this project.
- */
 public final class VoidWorldGenBuilder {
 
-    /** Reads the current ChunkVaultSettings (void vs. seeded) and builds accordingly. */
+    private VoidWorldGenBuilder() {}
+
     public static CompoundTag build(ClientLevel level) {
         ChunkVaultSettings settings = ChunkVaultSettings.get();
         if (settings.useSeed()) {
             try {
                 return buildSeeded(level, settings.seed());
             } catch (Throwable e) {
-                System.err.println("[ChunkVault] seeded world-gen build failed, falling back to void: " + e);
+                System.err.println("[ChunkVault] Seeded world-gen build failed, falling back to void: " + e);
             }
         }
         return buildVoid(level, 0L);
     }
 
-    /**
-     * Attempts to reuse the game's own default "Normal" world preset
-     * (real Overworld/Nether/End terrain) with the given seed, instead of
-     * building a noise-based generator by hand — that would mean
-     * reconstructing NoiseBasedChunkGenerator/NoiseGeneratorSettings/
-     * MultiNoiseBiomeSource from scratch, which is far deeper, far less
-     * documented API than anything else in this mod and very likely to need
-     * several more rounds of guessing. Looking up WorldPresets.NORMAL from
-     * the registry instead means the actual generator setup comes from real
-     * game data — IF that registry is even populated on a remote
-     * connection's synced RegistryAccess, which is the real uncertainty
-     * here (world presets are normally a "Create World" screen concept, not
-     * a gameplay registry servers sync to clients). Hence the try/catch in
-     * build(): any failure here just falls back to Void rather than
-     * breaking the mod.
-     */
-    private static CompoundTag buildSeeded(ClientLevel level, long seed) throws Exception {
+    private static CompoundTag buildSeeded(ClientLevel level, long seed) {
         HolderLookup.Provider registries = level.registryAccess();
         HolderLookup.RegistryLookup<WorldPreset> presets = registries.lookupOrThrow(Registries.WORLD_PRESET);
         Holder<WorldPreset> normal = presets.getOrThrow(WorldPresets.NORMAL);
@@ -94,10 +61,8 @@ public final class VoidWorldGenBuilder {
 
     private static CompoundTag buildVoid(ClientLevel level, long seed) {
         HolderLookup.Provider registries = level.registryAccess();
-
         HolderLookup.RegistryLookup<Biome> biomes = registries.lookupOrThrow(Registries.BIOME);
         Holder<Biome> theVoid = biomes.getOrThrow(Biomes.THE_VOID);
-
         HolderLookup.RegistryLookup<DimensionType> dimensionTypes = registries.lookupOrThrow(Registries.DIMENSION_TYPE);
 
         FlatLevelGeneratorSettings flatSettings =
@@ -109,33 +74,16 @@ public final class VoidWorldGenBuilder {
         stems.put(LevelStem.NETHER, new LevelStem(dimensionTypes.getOrThrow(BuiltinDimensionTypes.NETHER), generator));
         stems.put(LevelStem.END, new LevelStem(dimensionTypes.getOrThrow(BuiltinDimensionTypes.END), generator));
 
-        WorldDimensions dimensions = new WorldDimensions(stems);
-        return encode(registries, dimensions, seed, false);
+        return encode(registries, new WorldDimensions(stems), seed, false);
     }
 
     private static CompoundTag encode(HolderLookup.Provider registries, WorldDimensions dimensions,
-                                       long seed, boolean generateFeatures) {
+                                      long seed, boolean generateFeatures) {
         RegistryOps<Tag> ops = RegistryOps.create(NbtOps.INSTANCE, registries);
-        // Using result()/orElseThrow rather than DataResult.getOrThrow(...):
-        // the latter's signature has changed across DFU versions, result()
-        // returning Optional has not.
-        // Fixed: WorldDimensions.CODEC is a MapCodec<WorldDimensions>, not a
-        // full Codec — .codec() converts it before encodeStart() is usable.
         DataResult<Tag> encoded = WorldDimensions.CODEC.codec().encodeStart(ops, dimensions);
         Tag tag = encoded.result().orElseThrow(() ->
-                new IllegalStateException("failed to encode void WorldDimensions: " + encoded.error()));
+                new IllegalStateException("Failed to encode WorldDimensions: " + encoded.error()));
 
-        // The game's own error for our previous output was:
-        //   "No key dimensions in MapLike[{}]; No key seed in MapLike[{}]"
-        // i.e. the reader looked for BOTH `dimensions` and `seed` inside a
-        // (then empty) map. Two things were wrong with what we wrote:
-        //  1) WorldDimensions.CODEC alone only produces `dimensions` —
-        //     the file is really the full WorldGenSettings shape, which also
-        //     needs `seed` (plus generate_features / bonus_chest).
-        //  2) world_gen_settings.dat is a saved-data file, and those always
-        //     wrap their payload as { DataVersion: int, data: { ... } };
-        //     with the payload at the root, the reader saw `data` as an
-        //     empty map — hence the empty MapLike[{}] in the message.
         CompoundTag inner;
         if (tag instanceof CompoundTag compound) {
             inner = compound;
@@ -153,7 +101,6 @@ public final class VoidWorldGenBuilder {
         return root;
     }
 
-    /** Writes the built tag to data/minecraft/world_gen_settings.dat, gzip-compressed like level.dat. */
     public static void writeToWorld(Path worldDir, CompoundTag tag) {
         Path out = worldDir.resolve("data").resolve("minecraft").resolve("world_gen_settings.dat");
         try {
@@ -164,9 +111,7 @@ public final class VoidWorldGenBuilder {
                 NbtIo.write(tag, dos);
             }
         } catch (IOException e) {
-            System.err.println("[ChunkVault] failed to write world_gen_settings.dat: " + e);
+            System.err.println("[ChunkVault] Failed to write world_gen_settings.dat: " + e);
         }
     }
-
-    private VoidWorldGenBuilder() {}
 }
