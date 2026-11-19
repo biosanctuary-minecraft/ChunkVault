@@ -20,6 +20,8 @@ public class SettingsScreen extends Screen {
 
     private static final int ROW_H = 24;
     private static final int WIDTH = 360;
+    /** Extra vertical gap before the seed box, so its caption does not overlap the button above. */
+    private static final int SEED_GAP = 14;
 
     private EditBox seedBox;
     private final String serverKey = AutoRecord.serverKey();
@@ -71,7 +73,7 @@ public class SettingsScreen extends Screen {
         y += ROW_H;
 
         this.addRenderableWidget(genModeButton(x, y, s));
-        y += ROW_H;
+        y += ROW_H + SEED_GAP;
 
         seedBox = new EditBox(this.font, x + 140, y, WIDTH - 140, 20, Lang.c("settings.seed_box"));
         seedBox.setValue(Long.toString(s.seed()));
@@ -146,7 +148,7 @@ public class SettingsScreen extends Screen {
         g.centeredText(this.font, this.title.getString(), this.width / 2, 18, 0xFFFFFFFF);
 
         int x = (this.width - WIDTH) / 2;
-        g.text(this.font, Lang.s("settings.seed_label"), x, 40 + ROW_H * 4 - 11, 0xFFAAAAAA, true);
+        g.text(this.font, Lang.s("settings.seed_label"), x, 40 + ROW_H * 4 + SEED_GAP - 11, 0xFFAAAAAA, true);
         g.text(this.font,
                 Lang.s("settings.seed_note"),
                 x, this.height - 20, 0xFF808080, true);
