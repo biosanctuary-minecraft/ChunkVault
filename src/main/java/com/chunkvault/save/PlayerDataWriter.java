@@ -1,7 +1,11 @@
 package com.chunkvault.save;
 
 import net.minecraft.SharedConstants;
-import net.minecraft.nbt.*;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.DoubleTag;
+import net.minecraft.nbt.FloatTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.NbtIo;
 
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -11,25 +15,12 @@ import java.nio.file.Path;
 import java.util.UUID;
 import java.util.zip.GZIPOutputStream;
 
-/**
- * Builds and writes the player's saved state (position, rotation, dimension)
- * so that opening the recorded world drops the player exactly where
- * /chunkvault stop was run, in whichever dimension that was — not just the
- * Overworld, which is all level.dat's SpawnX/Y/Z can ever address.
- *
- * CHECK: as of 26.x, singleplayer worlds may have moved from embedding the
- * player directly in level.dat's Data.Player compound to a standalone file
- * (one changelog described the new path as players/data/<uuid>.dat rather
- * than the classic playerdata/<uuid>.dat used by multiplayer worlds/
- * servers). Since we can't verify which one 26.2 actually reads for a
- * freshly-created singleplayer world, we write to ALL three places —
- * whichever one is real gets picked up, the others are just unused
- * leftover files.
- */
 public final class PlayerDataWriter {
 
-    public static CompoundTag buildPlayerTag(UUID uuid, double x, double y, double z,
-                                              float yaw, float pitch, String dimensionId) {
+    private PlayerDataWriter() {}
+
+    public static CompoundTag buildPlayerTag(double x, double y, double z,
+                                             float yaw, float pitch, String dimensionId) {
         CompoundTag player = new CompoundTag();
 
         ListTag pos = new ListTag();
@@ -66,24 +57,17 @@ public final class PlayerDataWriter {
         return player;
     }
 
-    /** Writes the same player tag to every plausible player-data location. */
     public static void writeToWorld(Path worldDir, UUID uuid, CompoundTag playerTag) {
-        writeCompressed(worldDir.resolve("playerdata").resolve(uuid + ".dat"), playerTag);
-        writeCompressed(worldDir.resolve("players").resolve("data").resolve(uuid + ".dat"), playerTag);
-    }
-
-    private static void writeCompressed(Path file, CompoundTag tag) {
+        Path file = worldDir.resolve("players").resolve("data").resolve(uuid + ".dat");
         try {
             Files.createDirectories(file.getParent());
             try (OutputStream fos = Files.newOutputStream(file);
                  GZIPOutputStream gz = new GZIPOutputStream(fos);
                  DataOutputStream dos = new DataOutputStream(gz)) {
-                NbtIo.write(tag, dos);
+                NbtIo.write(playerTag, dos);
             }
         } catch (IOException e) {
-            System.err.println("[ChunkVault] failed to write player data to " + file + ": " + e);
+            System.err.println("[ChunkVault] Failed to write player data to " + file + ": " + e);
         }
     }
-
-    private PlayerDataWriter() {}
 }
