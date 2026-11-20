@@ -1,6 +1,7 @@
 package com.chunkvault;
 
 import com.chunkvault.gui.AreaHudOverlay;
+import com.chunkvault.gui.AreaInputScreen;
 import com.chunkvault.gui.ContainerDatabaseScreen;
 import com.chunkvault.gui.MapCache;
 import com.chunkvault.gui.MapScreen;
@@ -49,6 +50,7 @@ public class ChunkVaultClient implements ClientModInitializer {
     private static volatile boolean openMapNextTick;
     private static volatile boolean openSettingsNextTick;
     private static volatile boolean openChestsNextTick;
+    private static volatile boolean openAreaInputNextTick;
     private static int tickCounter;
 
     @Override
@@ -101,6 +103,12 @@ public class ChunkVaultClient implements ClientModInitializer {
                     Minecraft.getInstance().setScreenAndShow(mapScreen);
                 }
             }
+            if (openAreaInputNextTick) {
+                openAreaInputNextTick = false;
+                if (ProjectMap.isOpen()) {
+                    Minecraft.getInstance().setScreenAndShow(new AreaInputScreen(null));
+                }
+            }
 
             tickCounter++;
             if (tickCounter % 10 == 0 && RecordingState.get().isActive()) {
@@ -127,6 +135,7 @@ public class ChunkVaultClient implements ClientModInitializer {
                         .then(literal("settings").executes(ctx -> settings(ctx.getSource())))
                         .then(literal("area")
                                 .then(literal("set")
+                                        .executes(ctx -> areaSetGui(ctx.getSource()))
                                         .then(argument("x1", IntegerArgumentType.integer())
                                                 .then(argument("z1", IntegerArgumentType.integer())
                                                         .then(argument("x2", IntegerArgumentType.integer())
@@ -235,6 +244,15 @@ public class ChunkVaultClient implements ClientModInitializer {
             }
         }
         return count;
+    }
+
+    private int areaSetGui(FabricClientCommandSource source) {
+        if (!ProjectMap.isOpen()) {
+            source.sendFeedback(Component.literal("§c[ChunkVault] " + Lang.s("db.no_project")));
+            return 0;
+        }
+        openAreaInputNextTick = true;
+        return 1;
     }
 
     private int areaSet(FabricClientCommandSource source, int x1, int z1, int x2, int z2) {
