@@ -6,8 +6,8 @@
   "description": "Saves loaded chunks and opened container contents to a real world save as you play (26.2).",
   "authors": ["biosanctuary"],
   "contact": {
-    "sources": "https://github.com/biosanctuary/ChunkVault",
-    "issues": "https://github.com/biosanctuary/ChunkVault/issues"
+    "sources": "https://github.com/biosanctuary-minecraft/ChunkVault",
+    "issues": "https://github.com/biosanctuary-minecraft/ChunkVault/issues"
   },
   "license": "MIT",
   "environment": "client",
