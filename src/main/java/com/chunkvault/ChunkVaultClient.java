@@ -3,6 +3,7 @@ package com.chunkvault;
 import com.chunkvault.gui.AreaHudOverlay;
 import com.chunkvault.gui.AreaInputScreen;
 import com.chunkvault.gui.ContainerDatabaseScreen;
+import com.chunkvault.gui.ExplorerScreen;
 import com.chunkvault.gui.MapCache;
 import com.chunkvault.gui.MapScreen;
 import com.chunkvault.gui.ProjectMap;
@@ -34,6 +35,7 @@ import net.minecraft.world.level.chunk.LevelChunk;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.UUID;
 
 import static net.fabricmc.fabric.api.client.command.v2.ClientCommands.argument;
@@ -43,15 +45,29 @@ public class ChunkVaultClient implements ClientModInitializer {
 
     public record StopResult(int chunks, int chests, int entities, Path dir) {}
 
+    public record HotkeyEntry(KeyMapping mapping, String labelKey, String descKey, int accentColor, boolean comboDefault) {}
+
     private static final KeyMapping.Category KEY_CATEGORY =
             KeyMapping.Category.register(Identifier.fromNamespaceAndPath("chunkvault", "main"));
 
     private static KeyMapping openMapKey;
+    private static KeyMapping toggleRecordKey;
+    private static KeyMapping openChestsKey;
+    private static KeyMapping openProjectsKey;
+    private static KeyMapping areaCoordsKey;
+    private static KeyMapping toggleHudKey;
+    private static KeyMapping openSettingsKey;
+    private static List<HotkeyEntry> hotkeys = List.of();
+
     private static volatile boolean openMapNextTick;
     private static volatile boolean openSettingsNextTick;
     private static volatile boolean openChestsNextTick;
     private static volatile boolean openAreaInputNextTick;
     private static int tickCounter;
+
+    public static List<HotkeyEntry> hotkeys() {
+        return hotkeys;
+    }
 
     @Override
     public void onInitializeClient() {
@@ -61,6 +77,52 @@ public class ChunkVaultClient implements ClientModInitializer {
                 InputConstants.KEY_V,
                 KEY_CATEGORY
         ));
+        toggleRecordKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
+                "key.chunkvault.toggle_record",
+                InputConstants.Type.KEYSYM,
+                InputConstants.UNKNOWN.getValue(),
+                KEY_CATEGORY
+        ));
+        openChestsKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
+                "key.chunkvault.open_chests",
+                InputConstants.Type.KEYSYM,
+                InputConstants.UNKNOWN.getValue(),
+                KEY_CATEGORY
+        ));
+        openProjectsKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
+                "key.chunkvault.open_projects",
+                InputConstants.Type.KEYSYM,
+                InputConstants.UNKNOWN.getValue(),
+                KEY_CATEGORY
+        ));
+        areaCoordsKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
+                "key.chunkvault.area_coords",
+                InputConstants.Type.KEYSYM,
+                InputConstants.UNKNOWN.getValue(),
+                KEY_CATEGORY
+        ));
+        toggleHudKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
+                "key.chunkvault.toggle_hud",
+                InputConstants.Type.KEYSYM,
+                InputConstants.UNKNOWN.getValue(),
+                KEY_CATEGORY
+        ));
+        openSettingsKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
+                "key.chunkvault.open_settings",
+                InputConstants.Type.KEYSYM,
+                InputConstants.UNKNOWN.getValue(),
+                KEY_CATEGORY
+        ));
+
+        hotkeys = List.of(
+                new HotkeyEntry(openMapKey, "hotkeys.open_map", "hotkeys.open_map.desc", 0xFF38D8FF, true),
+                new HotkeyEntry(toggleRecordKey, "hotkeys.toggle_record", "hotkeys.toggle_record.desc", 0xFFFF6060, false),
+                new HotkeyEntry(openChestsKey, "hotkeys.open_chests", "hotkeys.open_chests.desc", 0xFFFFB830, false),
+                new HotkeyEntry(openProjectsKey, "hotkeys.open_projects", "hotkeys.open_projects.desc", 0xFFD9AE2C, false),
+                new HotkeyEntry(areaCoordsKey, "hotkeys.area_coords", "hotkeys.area_coords.desc", 0xFF2AA8C4, false),
+                new HotkeyEntry(toggleHudKey, "hotkeys.toggle_hud", "hotkeys.toggle_hud.desc", 0xFF70FF90, false),
+                new HotkeyEntry(openSettingsKey, "hotkeys.open_settings", "hotkeys.open_settings.desc", 0xFF7B90BD, false)
+        );
 
         AreaHudOverlay.register();
 
@@ -86,6 +148,62 @@ public class ChunkVaultClient implements ClientModInitializer {
                     }
                 }
             }
+            while (toggleRecordKey.consumeClick()) {
+                if (client.player != null) {
+                    if (RecordingState.get().isActive()) {
+                        StopResult res = stopRecording();
+                        if (res != null) {
+                            client.player.sendSystemMessage(Component.literal("§a[ChunkVault] "
+                                    + Lang.s("toast.stopped", res.chunks(), res.chests(), res.entities())));
+                        }
+                    } else if (ProjectMap.isOpen()) {
+                        int captured = startRecording(ProjectMap.name());
+                        if (captured >= 0) {
+                            AutoRecord.setWorld(AutoRecord.serverKey(), ProjectMap.name());
+                            client.player.sendSystemMessage(Component.literal("§a[ChunkVault] "
+                                    + Lang.s("toast.started", captured)));
+                        }
+                    } else {
+                        client.player.sendSystemMessage(Component.literal("§c[ChunkVault] " + Lang.s("db.no_project")));
+                    }
+                }
+            }
+            while (openChestsKey.consumeClick()) {
+                if (client.player != null) {
+                    if (ProjectMap.isOpen()) {
+                        client.setScreenAndShow(new ContainerDatabaseScreen(new MapScreen()));
+                    } else {
+                        client.player.sendSystemMessage(Component.literal("§c[ChunkVault] " + Lang.s("db.no_project")));
+                    }
+                }
+            }
+            while (openProjectsKey.consumeClick()) {
+                if (client.player != null) {
+                    client.setScreenAndShow(new ExplorerScreen(new MapScreen()));
+                }
+            }
+            while (areaCoordsKey.consumeClick()) {
+                if (client.player != null) {
+                    if (ProjectMap.isOpen()) {
+                        client.setScreenAndShow(new AreaInputScreen(null));
+                    } else {
+                        client.player.sendSystemMessage(Component.literal("§c[ChunkVault] " + Lang.s("db.no_project")));
+                    }
+                }
+            }
+            while (toggleHudKey.consumeClick()) {
+                if (client.player != null) {
+                    boolean on = AreaPlan.toggleHud();
+                    client.player.sendSystemMessage(Component.literal("§b[ChunkVault] "
+                            + Lang.s("area.btn_hud", on ? Lang.s("common.on") : Lang.s("common.off"))));
+                }
+            }
+            while (openSettingsKey.consumeClick()) {
+                if (client.player != null) {
+                    client.setScreenAndShow(new SettingsScreen());
+                }
+            }
+
             if (openMapNextTick) {
                 openMapNextTick = false;
                 Minecraft.getInstance().setScreenAndShow(new MapScreen());
