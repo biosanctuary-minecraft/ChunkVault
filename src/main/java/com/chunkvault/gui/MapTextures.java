@@ -1,18 +1,14 @@
 package com.chunkvault.gui;
 
+import com.mojang.blaze3d.platform.NativeImage;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.resources.Identifier;
 
-import java.lang.invoke.MethodHandle;
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.MethodType;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.Supplier;
 
 final class MapTextures {
 
@@ -25,8 +21,8 @@ final class MapTextures {
     private static final int EVICT_AFTER_FRAMES = 600;
 
     static final class Lod {
-        Object tex;
-        Object img;
+        DynamicTexture tex;
+        NativeImage img;
         Identifier id;
         boolean needsUpload;
         boolean ready;
@@ -39,18 +35,7 @@ final class MapTextures {
 
     private static final Map<String, Map<Long, Region>> REGIONS = new HashMap<>();
 
-    private static boolean initDone;
-    private static boolean ok;
-    private static int ctorKind;
-    private static Constructor<?> texCtor;
-    private static Method getPixels;
-    private static Method upload;
-    private static Method close;
-    private static Method register;
-    private static Method release;
-    private static Method setFilter;
-    private static MethodHandle setPixel;
-    private static boolean setterArgb;
+    private static boolean ok = true;
     private static int counter;
     private static int session = -1;
     private static int buildLeft;
@@ -59,16 +44,6 @@ final class MapTextures {
     private MapTextures() {}
 
     static boolean available() {
-        if (!initDone) {
-            initDone = true;
-            try {
-                init();
-                ok = true;
-            } catch (Throwable t) {
-                ok = false;
-                System.err.println("[ChunkVault] Map textures unavailable, falling back to fill renderer: " + t);
-            }
-        }
         return ok;
     }
 
@@ -77,66 +52,6 @@ final class MapTextures {
             System.err.println("[ChunkVault] Map texture error, falling back to fill renderer: " + t);
         }
         ok = false;
-    }
-
-    private static void init() throws Throwable {
-        Class<?> dyn = Class.forName("net.minecraft.client.renderer.texture.DynamicTexture");
-
-        try {
-            texCtor = dyn.getConstructor(Supplier.class, int.class, int.class, boolean.class);
-            ctorKind = 0;
-        } catch (NoSuchMethodException e) {
-            try {
-                texCtor = dyn.getConstructor(String.class, int.class, int.class, boolean.class);
-                ctorKind = 1;
-            } catch (NoSuchMethodException e2) {
-                texCtor = dyn.getConstructor(int.class, int.class, boolean.class);
-                ctorKind = 2;
-            }
-        }
-
-        getPixels = dyn.getMethod("getPixels");
-        upload = dyn.getMethod("upload");
-        close = dyn.getMethod("close");
-
-        for (Method m : dyn.getMethods()) {
-            if (m.getName().equals("setFilter") && m.getParameterCount() == 2
-                    && m.getParameterTypes()[0] == boolean.class && m.getParameterTypes()[1] == boolean.class) {
-                setFilter = m;
-            }
-        }
-
-        Class<?> img = getPixels.getReturnType();
-        String[] names = {"setColorArgb", "setPixelABGR", "setColor", "setPixelRGBA", "setPixel"};
-        boolean[] argb = {true, false, false, false, true};
-        Method setter = null;
-        for (int i = 0; i < names.length && setter == null; i++) {
-            try {
-                setter = img.getMethod(names[i], int.class, int.class, int.class);
-                setterArgb = argb[i];
-            } catch (NoSuchMethodException ignored) {
-            }
-        }
-        if (setter == null) {
-            throw new NoSuchMethodException("No NativeImage pixel setter found");
-        }
-        setPixel = MethodHandles.publicLookup().unreflect(setter)
-                .asType(MethodType.methodType(void.class, Object.class, int.class, int.class, int.class));
-
-        Class<?> tmClass = Minecraft.getInstance().getTextureManager().getClass();
-        for (Method m : tmClass.getMethods()) {
-            Class<?>[] p = m.getParameterTypes();
-            if (m.getName().equals("register") && p.length == 2
-                    && p[0].isAssignableFrom(Identifier.class) && p[1].isAssignableFrom(dyn)) {
-                register = m;
-            }
-            if (m.getName().equals("release") && p.length == 1 && p[0].isAssignableFrom(Identifier.class)) {
-                release = m;
-            }
-        }
-        if (register == null) {
-            throw new NoSuchMethodException("TextureManager.register(Identifier, texture) not found");
-        }
     }
 
     static void beginFrame(long frame, String dimension, Map<Long, MapCache.ChunkColors> cache) {
@@ -211,7 +126,7 @@ final class MapTextures {
 
             if (lod.needsUpload && uploadLeft > 0) {
                 uploadLeft--;
-                upload.invoke(lod.tex);
+                lod.tex.upload();
                 lod.needsUpload = false;
                 lod.ready = true;
             }
@@ -222,27 +137,17 @@ final class MapTextures {
         }
     }
 
-    private static Lod createLod(int lodIdx) throws Throwable {
+    private static Lod createLod(int lodIdx) {
         int size = SIZE[lodIdx];
         int n = ++counter;
-        String label = "chunkvault_map_" + n;
-        Object tex = switch (ctorKind) {
-            case 0 -> texCtor.newInstance((Supplier<String>) () -> label, size, size, true);
-            case 1 -> texCtor.newInstance(label, size, size, true);
-            default -> texCtor.newInstance(size, size, true);
-        };
-        Object img = getPixels.invoke(tex);
+        DynamicTexture tex = new DynamicTexture("chunkvault_map_" + n, size, size, true);
+        NativeImage img = tex.getPixels();
         if (img == null) {
+            tex.close();
             throw new IllegalStateException("DynamicTexture has no pixels");
         }
-        if (setFilter != null) {
-            try {
-                setFilter.invoke(tex, false, false);
-            } catch (Throwable ignored) {
-            }
-        }
         Identifier id = Identifier.fromNamespaceAndPath("chunkvault", "map/" + n);
-        register.invoke(Minecraft.getInstance().getTextureManager(), id, tex);
+        Minecraft.getInstance().getTextureManager().register(id, tex);
 
         Lod lod = new Lod();
         lod.tex = tex;
@@ -252,7 +157,7 @@ final class MapTextures {
     }
 
     private static void fullFill(Lod lod, int lodIdx, int rx, int rz,
-                                 Map<Long, MapCache.ChunkColors> cache) throws Throwable {
+                                 Map<Long, MapCache.ChunkColors> cache) {
         for (int lz = 0; lz < 16; lz++) {
             for (int lx = 0; lx < 16; lx++) {
                 MapCache.ChunkColors c = cache.get(MapCache.key(rx * 16 + lx, rz * 16 + lz));
@@ -264,25 +169,18 @@ final class MapTextures {
         lod.needsUpload = true;
     }
 
-    private static void writeChunk(Lod lod, int lodIdx, int lx, int lz, MapCache.ChunkColors c) throws Throwable {
+    private static void writeChunk(Lod lod, int lodIdx, int lx, int lz, MapCache.ChunkColors c) {
         int n = PX_PER_CHUNK[lodIdx];
         int[] src = c == null ? null : (lodIdx == 0 ? c.px : c.l4);
-        Object img = lod.img;
+        NativeImage img = lod.img;
         int baseX = lx * n;
         int baseY = lz * n;
         for (int y = 0; y < n; y++) {
             for (int x = 0; x < n; x++) {
                 int v = src == null ? 0 : src[y * n + x];
-                if (!setterArgb) {
-                    v = swapRb(v);
-                }
-                setPixel.invokeExact(img, baseX + x, baseY + y, v);
+                img.setPixel(baseX + x, baseY + y, v);
             }
         }
-    }
-
-    private static int swapRb(int c) {
-        return (c & 0xFF00FF00) | ((c >> 16) & 0xFF) | ((c & 0xFF) << 16);
     }
 
     private static void evict(long frame) {
@@ -316,10 +214,8 @@ final class MapTextures {
             return;
         }
         try {
-            if (release != null) {
-                release.invoke(Minecraft.getInstance().getTextureManager(), lod.id);
-            }
-            close.invoke(lod.tex);
+            Minecraft.getInstance().getTextureManager().release(lod.id);
+            lod.tex.close();
         } catch (Throwable ignored) {
         }
     }
