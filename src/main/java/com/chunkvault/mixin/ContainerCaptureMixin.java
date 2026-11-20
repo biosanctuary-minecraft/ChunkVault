@@ -29,6 +29,7 @@ import net.minecraft.world.level.block.state.properties.ChestType;
 import net.minecraft.world.level.chunk.LevelChunk;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -38,6 +39,33 @@ public abstract class ContainerCaptureMixin {
 
     @Shadow
     protected AbstractContainerMenu menu;
+
+    @Unique
+    private boolean chunkvault$checked;
+
+    @Unique
+    private BlockPos chunkvault$targetPos;
+
+    @Inject(method = "init", at = @At("HEAD"))
+    private void chunkvault$onContainerOpened(CallbackInfo ci) {
+        if (chunkvault$checked) {
+            return;
+        }
+        chunkvault$checked = true;
+        if (!RecordingState.get().isActive() || !isSupportedMenu(this.menu)) {
+            return;
+        }
+        BlockPos pos = LastInteraction.consumeRecent();
+        if (pos == null) {
+            return;
+        }
+        Minecraft client = Minecraft.getInstance();
+        if (client.player == null
+                || client.player.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5) > 64.0) {
+            return;
+        }
+        chunkvault$targetPos = pos;
+    }
 
     @Inject(method = "removed", at = @At("HEAD"))
     private void chunkvault$onContainerClosed(CallbackInfo ci) {
@@ -50,14 +78,11 @@ public abstract class ContainerCaptureMixin {
     }
 
     private void chunkvault$capture() {
-        if (!RecordingState.get().isActive()) {
+        BlockPos pos = chunkvault$targetPos;
+        chunkvault$targetPos = null;
+        if (!RecordingState.get().isActive() || pos == null || !isSupportedMenu(this.menu)) {
             return;
         }
-        BlockPos pos = LastInteraction.get();
-        if (pos == null || !isSupportedMenu(this.menu)) {
-            return;
-        }
-        LastInteraction.set(null);
 
         Minecraft client = Minecraft.getInstance();
         ClientLevel level = client.level;
@@ -86,7 +111,6 @@ public abstract class ContainerCaptureMixin {
             BlockPos otherPos = findOtherHalf(level, state, pos);
             BlockEntity other = otherPos == null ? null : level.getBlockEntity(otherPos);
             if (other instanceof Container otherContainer) {
-                // Double chest slots are ordered [RIGHT (0..26), LEFT (27..53)].
                 boolean primaryIsFirst = state.getValue(ChestBlock.TYPE) == ChestType.RIGHT;
                 BlockEntity firstBe = primaryIsFirst ? primary : other;
                 BlockEntity secondBe = primaryIsFirst ? other : primary;
