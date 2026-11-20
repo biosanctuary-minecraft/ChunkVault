@@ -8,7 +8,7 @@
 - **Storage contents**: open a container while recording and its contents are saved, with a message in chat showing what was stored and where. Supported: chests, trapped chests, barrels, shulker boxes, hoppers, droppers and dispensers, furnaces, blast furnaces and smokers, brewing stands, crafters.
 - **Latest state wins**: open a container again later and the save is updated with its new contents.
 - **Mobs and items**: entities can be saved too (can be turned off).
-- **In-game map**: see everything you have recorded, with your position and the chunk under the cursor.
+- **In-game map**: press `C + V` (rebindable in Controls) or run `/chunkvault map` to see everything you have recorded, with your position and the chunk under the cursor.
 - **Projects**: create a new project (**New File**) or continue an old one (**Open**), and copy finished worlds straight into your `saves` folder.
 - **Settings**: auto-record per server, block mob spawning in the saved world, and choose what is generated outside the recorded area: void or terrain from a seed.
 - **Languages**: English and Russian, chosen automatically from your game language.
@@ -16,7 +16,7 @@
 ## How to use
 
 1. Join a server or world.
-2. Run `/chunkvault map` and click **NEW FILE** to create a project, then **RECORD** (or run `/chunkvault start <name>`).
+2. Press `C + V` (or run `/chunkvault map`) and click **NEW FILE** to create a project, then **RECORD** (or run `/chunkvault start <name>`).
 3. Explore and open any containers you want saved.
 4. Press **STOP** or run `/chunkvault stop`.
 5. Click **OPEN** on the map screen and hit **Copy to saves** (or copy the folder manually from `.minecraft/chunkvault/` to `.minecraft/saves/`).
