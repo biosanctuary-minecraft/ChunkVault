@@ -141,6 +141,49 @@ public final class ProjectMap {
         CHUNK_REV.incrementAndGet();
     }
 
+    public static int trimToArea(String dimensionId, int minCx, int maxCx, int minCz, int maxCz) {
+        synchronized (SAVE_LOCK) {
+            if (name == null) {
+                return 0;
+            }
+            Map<Long, MapCache.ChunkColors> map = CHUNKS.get(dimensionId);
+            if (map == null || map.isEmpty()) {
+                return 0;
+            }
+            int removed = 0;
+            var it = map.keySet().iterator();
+            while (it.hasNext()) {
+                long key = it.next();
+                int cx = MapCache.keyX(key);
+                int cz = MapCache.keyZ(key);
+                if (cx < minCx || cx > maxCx || cz < minCz || cz > maxCz) {
+                    it.remove();
+                    removed++;
+                }
+            }
+            if (removed == 0) {
+                return 0;
+            }
+            Set<Long> regions = regionKeys(dimensionId);
+            regions.clear();
+            for (long key : map.keySet()) {
+                regions.add(MapCache.key(MapCache.keyX(key) >> 4, MapCache.keyZ(key) >> 4));
+            }
+            dirtyChunks(dimensionId).clear();
+            session++;
+            CHUNK_REV.incrementAndGet();
+            if (map.isEmpty()) {
+                try {
+                    Files.deleteIfExists(root().resolve(name).resolve("chunkvault_map").resolve(fileFor(dimensionId)));
+                } catch (Exception ignored) {
+                }
+            } else {
+                save();
+            }
+            return removed;
+        }
+    }
+
     public static void tick() {
         if (name == null || !storeDirty) {
             return;
