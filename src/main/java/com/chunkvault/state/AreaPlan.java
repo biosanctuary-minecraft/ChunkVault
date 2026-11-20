@@ -4,17 +4,22 @@ import com.chunkvault.ChunkVaultClient;
 import com.chunkvault.Lang;
 import com.chunkvault.gui.MapCache;
 import com.chunkvault.gui.ProjectMap;
+import com.chunkvault.save.ContainerDatabase;
+import com.chunkvault.save.SimpleRegionFile;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Stream;
 
 public final class AreaPlan {
 
@@ -27,6 +32,8 @@ public final class AreaPlan {
             int nearestCz,
             boolean hasMissing
     ) {}
+
+    public record TrimResult(int removedChunks, int removedContainers) {}
 
     private static final int MAX_SPAN_CHUNKS = 512;
 
@@ -42,6 +49,8 @@ public final class AreaPlan {
     private static volatile int maxCz;
     private static volatile boolean hudVisible = true;
     private static volatile boolean autoStop;
+    private static volatile boolean clipToArea;
+    private static volatile boolean dimOutside = true;
     private static volatile boolean autoStopTriggered;
 
     private static int cachedPlanRev = -1;
@@ -90,6 +99,25 @@ public final class AreaPlan {
         return autoStop;
     }
 
+    public static boolean isClipToArea() {
+        return clipToArea;
+    }
+
+    public static boolean isDimOutside() {
+        return dimOutside;
+    }
+
+    public static boolean allowsChunk(String dim, int cx, int cz) {
+        if (!active || !clipToArea) {
+            return true;
+        }
+        return dimension.equals(dim) && cx >= minCx && cx <= maxCx && cz >= minCz && cz <= maxCz;
+    }
+
+    public static boolean allowsBlock(String dim, int x, int z) {
+        return allowsChunk(dim, x >> 4, z >> 4);
+    }
+
     public static int totalChunks() {
         if (!active) {
             return 0;
@@ -112,6 +140,8 @@ public final class AreaPlan {
             maxCz = 0;
             hudVisible = true;
             autoStop = false;
+            clipToArea = false;
+            dimOutside = true;
             autoStopTriggered = false;
             Path file = projectDir.resolve("chunkvault_area.properties");
             if (Files.isRegularFile(file)) {
@@ -130,6 +160,8 @@ public final class AreaPlan {
                     maxCz = Math.max(c, d);
                     hudVisible = Boolean.parseBoolean(p.getProperty("hudVisible", "true"));
                     autoStop = Boolean.parseBoolean(p.getProperty("autoStop", "false"));
+                    clipToArea = Boolean.parseBoolean(p.getProperty("clipToArea", "false"));
+                    dimOutside = Boolean.parseBoolean(p.getProperty("dimOutside", "true"));
                 } catch (Exception e) {
                     System.err.println("[ChunkVault] Failed to load chunkvault_area.properties: " + e);
                     active = false;
@@ -204,6 +236,130 @@ public final class AreaPlan {
             autoStopTriggered = false;
             saveAsyncLocked();
             return autoStop;
+        }
+    }
+
+    public static boolean toggleClipToArea() {
+        synchronized (LOCK) {
+            clipToArea = !clipToArea;
+            saveAsyncLocked();
+            return clipToArea;
+        }
+    }
+
+    public static boolean toggleDimOutside() {
+        synchronized (LOCK) {
+            dimOutside = !dimOutside;
+            saveAsyncLocked();
+            return dimOutside;
+        }
+    }
+
+    public static TrimResult trimProjectToArea() {
+        Path dir;
+        String dim;
+        int x0;
+        int x1;
+        int z0;
+        int z1;
+        synchronized (LOCK) {
+            if (!active || activeProjectDir == null || RecordingState.get().isActive()) {
+                return new TrimResult(0, 0);
+            }
+            dir = activeProjectDir;
+            dim = dimension;
+            x0 = minCx;
+            x1 = maxCx;
+            z0 = minCz;
+            z1 = maxCz;
+        }
+
+        int colon = dim.indexOf(':');
+        String ns = colon >= 0 ? dim.substring(0, colon) : "minecraft";
+        String path = colon >= 0 ? dim.substring(colon + 1) : dim;
+        Path dimDir = dir.resolve("dimensions").resolve(ns).resolve(path);
+
+        trimRegionFolder(dimDir.resolve("region"), x0, x1, z0, z1);
+        trimRegionFolder(dimDir.resolve("entities"), x0, x1, z0, z1);
+
+        int removedChunks = ProjectMap.trimToArea(dim, x0, x1, z0, z1);
+        int removedContainers = ContainerDatabase.trimToArea(dim, x0, x1, z0, z1);
+
+        synchronized (LOCK) {
+            invalidateLocked();
+        }
+        return new TrimResult(removedChunks, removedContainers);
+    }
+
+    private static void trimRegionFolder(Path folder, int x0, int x1, int z0, int z1) {
+        if (!Files.isDirectory(folder)) {
+            return;
+        }
+        List<Path> files = new ArrayList<>();
+        try (Stream<Path> s = Files.list(folder)) {
+            for (Path p : (Iterable<Path>) s::iterator) {
+                files.add(p);
+            }
+        } catch (Exception e) {
+            System.err.println("[ChunkVault] Failed to list region folder " + folder + ": " + e);
+            return;
+        }
+
+        for (Path file : files) {
+            String name = file.getFileName().toString();
+            if (!name.startsWith("r.") || !name.endsWith(".mca")) {
+                continue;
+            }
+            String[] parts = name.split("\\.");
+            if (parts.length != 4) {
+                continue;
+            }
+            int rx;
+            int rz;
+            try {
+                rx = Integer.parseInt(parts[1]);
+                rz = Integer.parseInt(parts[2]);
+            } catch (NumberFormatException ignored) {
+                continue;
+            }
+            int rMinX = rx * 32;
+            int rMaxX = rMinX + 31;
+            int rMinZ = rz * 32;
+            int rMaxZ = rMinZ + 31;
+
+            if (rMaxX < x0 || rMinX > x1 || rMaxZ < z0 || rMinZ > z1) {
+                try {
+                    Files.deleteIfExists(file);
+                } catch (Exception e) {
+                    System.err.println("[ChunkVault] Failed to delete region " + file + ": " + e);
+                }
+                continue;
+            }
+            if (rMinX >= x0 && rMaxX <= x1 && rMinZ >= z0 && rMaxZ <= z1) {
+                continue;
+            }
+
+            boolean keep = true;
+            try (SimpleRegionFile rf = new SimpleRegionFile(file)) {
+                for (int lz = 0; lz < 32; lz++) {
+                    int cz = rMinZ + lz;
+                    for (int lx = 0; lx < 32; lx++) {
+                        int cx = rMinX + lx;
+                        if (cx < x0 || cx > x1 || cz < z0 || cz > z1) {
+                            rf.deleteChunk(lx, lz);
+                        }
+                    }
+                }
+                keep = rf.hasAnyChunks();
+            } catch (Exception e) {
+                System.err.println("[ChunkVault] Failed to trim region " + file + ": " + e);
+            }
+            if (!keep) {
+                try {
+                    Files.deleteIfExists(file);
+                } catch (Exception ignored) {
+                }
+            }
         }
     }
 
@@ -307,6 +463,8 @@ public final class AreaPlan {
         p.setProperty("maxCz", Integer.toString(maxCz));
         p.setProperty("hudVisible", Boolean.toString(hudVisible));
         p.setProperty("autoStop", Boolean.toString(autoStop));
+        p.setProperty("clipToArea", Boolean.toString(clipToArea));
+        p.setProperty("dimOutside", Boolean.toString(dimOutside));
         IO.execute(() -> writeProperties(dir.resolve("chunkvault_area.properties"), p));
     }
 
