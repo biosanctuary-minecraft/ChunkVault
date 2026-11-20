@@ -12,7 +12,7 @@ import net.minecraft.network.chat.Component;
 
 public class SettingsScreen extends Screen {
 
-    private static final int TOP_Y = 34;
+    private static final int TOP_Y = 30;
     private static final int ROW_H = 24;
     private static final int WIDTH = 360;
     private static final int SEED_GAP = 12;
@@ -94,7 +94,15 @@ public class SettingsScreen extends Screen {
         seedBox.setValue(Long.toString(s.seed()));
         seedBox.setMaxLength(20);
         this.addRenderableWidget(seedBox);
-        y += ROW_H + 6;
+        y += ROW_H + 4;
+
+        this.addRenderableWidget(Button.builder(Lang.c("settings.hotkeys"), b -> {
+                    applySeed();
+                    Minecraft.getInstance().setScreenAndShow(new HotkeysScreen(this));
+                })
+                .bounds(x, y, WIDTH, 20)
+                .build());
+        y += ROW_H;
 
         this.addRenderableWidget(Button.builder(Lang.c("common.done"), b -> this.onClose())
                 .bounds(x, y, WIDTH, 20)
@@ -163,7 +171,7 @@ public class SettingsScreen extends Screen {
     @Override
     public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
         g.fill(0, 0, this.width, this.height, 0xE0101018);
-        g.centeredText(this.font, this.title.getString(), this.width / 2, 14, 0xFFFFFFFF);
+        g.centeredText(this.font, this.title.getString(), this.width / 2, 12, 0xFFFFFFFF);
 
         int x = (this.width - WIDTH) / 2;
         g.text(this.font, Lang.s("settings.seed_label"), x, TOP_Y + ROW_H * 5 + SEED_GAP - 11, 0xFFAAAAAA, true);
