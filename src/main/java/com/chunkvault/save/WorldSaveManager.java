@@ -226,6 +226,6 @@ public final class WorldSaveManager {
         if (playerTag != null && uuid != null) {
             PlayerDataWriter.writeToWorld(rootDir, uuid, playerTag);
         }
-        LevelDatWriter.write(rootDir, gameDir, levelName, spawnPos, playerTag);
+        LevelDatWriter.write(rootDir, gameDir, levelName, spawnPos, uuid);
     }
 }
