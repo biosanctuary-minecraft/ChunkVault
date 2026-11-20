@@ -111,15 +111,41 @@ public final class ChunkNbtWriter {
     }
 
     private static CompoundTag writeBiomes(ClientLevel level, LevelChunkSection section) {
-        Holder<Biome> biome = section.getNoiseBiome(0, 0, 0);
+        var biomeRegistry = level.registryAccess().lookupOrThrow(Registries.BIOME);
+        Map<String, Integer> paletteIndex = new LinkedHashMap<>();
+        List<String> palette = new ArrayList<>();
+        int[] indices = new int[64];
+
+        int cursor = 0;
+        for (int y = 0; y < 4; y++) {
+            for (int z = 0; z < 4; z++) {
+                for (int x = 0; x < 4; x++) {
+                    Holder<Biome> biome = section.getNoiseBiome(x, y, z);
+                    var keyObj = biomeRegistry.getKey(biome.value());
+                    String key = keyObj == null ? "minecraft:plains" : keyObj.toString();
+                    Integer idx = paletteIndex.get(key);
+                    if (idx == null) {
+                        idx = palette.size();
+                        paletteIndex.put(key, idx);
+                        palette.add(key);
+                    }
+                    indices[cursor++] = idx;
+                }
+            }
+        }
+
         CompoundTag out = new CompoundTag();
         ListTag paletteTag = new ListTag();
-        String key = level.registryAccess()
-                .lookupOrThrow(Registries.BIOME)
-                .getKey(biome.value())
-                .toString();
-        paletteTag.add(StringTag.valueOf(key));
+        for (String key : palette) {
+            paletteTag.add(StringTag.valueOf(key));
+        }
         out.put("palette", paletteTag);
+
+        if (palette.size() > 1) {
+            int bitsPerEntry = Math.max(1, 32 - Integer.numberOfLeadingZeros(palette.size() - 1));
+            out.put("data", new LongArrayTag(packEntries(indices, bitsPerEntry)));
+        }
+
         return out;
     }
 
