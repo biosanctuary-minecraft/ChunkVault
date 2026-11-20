@@ -3,6 +3,7 @@ package com.chunkvault.gui;
 import com.chunkvault.ChunkVaultClient;
 import com.chunkvault.Lang;
 import com.chunkvault.save.ContainerDatabase;
+import com.chunkvault.state.AreaPlan;
 import com.chunkvault.state.AutoRecord;
 import com.chunkvault.state.RecordingState;
 import com.mojang.blaze3d.platform.InputConstants;
@@ -20,6 +21,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 public class MapScreen extends Screen {
@@ -63,10 +65,30 @@ public class MapScreen extends Screen {
     private int dbX1;
     private int pinsX0;
     private int pinsX1;
+    private int areaX0;
+    private int areaX1;
     private int setX0;
     private int setX1;
     private String toast;
     private long toastUntil;
+
+    private int areaBarY0;
+    private int areaBarY1;
+    private int abRedrawX0;
+    private int abRedrawX1;
+    private int abHudX0;
+    private int abHudX1;
+    private int abAutoX0;
+    private int abAutoX1;
+    private int abClearX0;
+    private int abClearX1;
+
+    private boolean selectingArea;
+    private boolean draggingArea;
+    private int areaStartCx;
+    private int areaStartCz;
+    private int areaEndCx;
+    private int areaEndCz;
 
     private boolean draggingMap;
     private boolean dragged;
@@ -112,6 +134,16 @@ public class MapScreen extends Screen {
         showPins = true;
     }
 
+    private int screenToChunkX(double mouseX) {
+        double mapCX = this.width / 2.0;
+        return ((int) Math.floor(centerX + (mouseX - mapCX) / scale)) >> 4;
+    }
+
+    private int screenToChunkZ(double mouseY) {
+        double mapCY = TOP_BAR + (this.height - TOP_BAR - BOTTOM_BAR) / 2.0;
+        return ((int) Math.floor(centerZ + (mouseY - mapCY) / scale)) >> 4;
+    }
+
     @Override
     public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
         super.extractRenderState(g, mouseX, mouseY, partialTick);
@@ -136,17 +168,19 @@ public class MapScreen extends Screen {
         final int mapH = mapY1 - mapY0;
         final double mapCX = mapX0 + mapW / 2.0;
         final double mapCY = mapY0 + mapH / 2.0;
-        boolean inMap = mouseY >= mapY0 && mouseY < mapY1;
+
+        String dimensionId = level.dimension().identifier().toString();
+        var cache = ProjectMap.forDimension(dimensionId);
+        boolean hasProject = ProjectMap.isOpen();
+        boolean showAreaBar = hasProject && (selectingArea || AreaPlan.isActive());
+        boolean inAreaBar = showAreaBar && mouseY >= areaBarY0 && mouseY < areaBarY1;
+        boolean inMap = mouseY >= mapY0 && mouseY < mapY1 && !inAreaBar;
 
         dev = Math.max(1.0, (double) mc.getWindow().getWidth() / (double) this.width);
         clipX0 = (int) Math.round(mapX0 * dev);
         clipY0 = (int) Math.round(mapY0 * dev);
         clipX1 = (int) Math.round(mapX1 * dev);
         clipY1 = (int) Math.round(mapY1 * dev);
-
-        String dimensionId = level.dimension().identifier().toString();
-        var cache = ProjectMap.forDimension(dimensionId);
-        boolean hasProject = ProjectMap.isOpen();
 
         double ppc = scale * 16.0;
         double ppcDev = ppc * dev;
@@ -245,6 +279,27 @@ public class MapScreen extends Screen {
             }
         }
 
+        if (hasProject && AreaPlan.isActive() && dimensionId.equals(AreaPlan.dimension())) {
+            drawPlannedAreaDev(g, cache, player, mapCX, mapCY, minCx, maxCx, minCz, maxCz);
+        }
+
+        if (selectingArea && draggingArea) {
+            int sx0 = Math.min(areaStartCx, areaEndCx);
+            int sx1 = Math.max(areaStartCx, areaEndCx);
+            int sz0 = Math.min(areaStartCz, areaEndCz);
+            int sz1 = Math.max(areaStartCz, areaEndCz);
+            int px0 = (int) Math.round((mapCX + (sx0 * 16.0 - centerX) * scale) * dev);
+            int px1 = (int) Math.round((mapCX + ((sx1 + 1) * 16.0 - centerX) * scale) * dev);
+            int py0 = (int) Math.round((mapCY + (sz0 * 16.0 - centerZ) * scale) * dev);
+            int py1 = (int) Math.round((mapCY + ((sz1 + 1) * 16.0 - centerZ) * scale) * dev);
+            fillI(g, px0, py0, px1, py1, 0x3838D8FF);
+            int t = Math.max(2, (int) Math.round(dev));
+            fillI(g, px0, py0, px1, py0 + t, 0xFF38D8FF);
+            fillI(g, px0, py1 - t, px1, py1, 0xFF38D8FF);
+            fillI(g, px0, py0, px0 + t, py1, 0xFF38D8FF);
+            fillI(g, px1 - t, py0, px1, py1, 0xFF38D8FF);
+        }
+
         if (recording && zoneCount > 0) {
             for (int i = 0; i < zoneCount; i++) {
                 int x0 = (int) Math.round((mapCX + (zoneX0[i] * 16.0 - centerX) * scale) * dev);
@@ -283,11 +338,12 @@ public class MapScreen extends Screen {
             int y0 = (int) Math.round(hy);
             int x1 = (int) Math.round(hx + ppcDev);
             int y1 = (int) Math.round(hy + ppcDev);
-            fillI(g, x0, y0, x1, y1, 0x1EFFFFFF);
-            fillI(g, x0, y0, x1, y0 + 1, 0xB0FFFFFF);
-            fillI(g, x0, y1 - 1, x1, y1, 0xB0FFFFFF);
-            fillI(g, x0, y0, x0 + 1, y1, 0xB0FFFFFF);
-            fillI(g, x1 - 1, y0, x1, y1, 0xB0FFFFFF);
+            fillI(g, x0, y0, x1, y1, selectingArea ? 0x3538D8FF : 0x1EFFFFFF);
+            int borderC = selectingArea ? 0xFF38D8FF : 0xB0FFFFFF;
+            fillI(g, x0, y0, x1, y0 + 1, borderC);
+            fillI(g, x0, y1 - 1, x1, y1, borderC);
+            fillI(g, x0, y0, x0 + 1, y1, borderC);
+            fillI(g, x1 - 1, y0, x1, y1, borderC);
         }
 
         double pcx = (mapCX + (player.getX() - centerX) * scale) * dev;
@@ -298,7 +354,7 @@ public class MapScreen extends Screen {
         g.pose().popMatrix();
 
         hoveredPin = null;
-        if (hasProject && showPins) {
+        if (hasProject && showPins && !selectingArea) {
             drawContainerPins(g, dimensionId, mapCX, mapCY, minCx, maxCx, minCz, maxCz, mouseX, mouseY, inMap);
         }
 
@@ -313,6 +369,18 @@ public class MapScreen extends Screen {
             g.fill(fx - ringR, fy + ringR - 2, fx + ringR, fy + ringR, ringColor);
             g.fill(fx - ringR, fy - ringR, fx - ringR + 2, fy + ringR, ringColor);
             g.fill(fx + ringR - 2, fy - ringR, fx + ringR, fy + ringR, ringColor);
+        }
+
+        if (selectingArea && draggingArea) {
+            int wChunks = Math.abs(areaEndCx - areaStartCx) + 1;
+            int hChunks = Math.abs(areaEndCz - areaStartCz) + 1;
+            String dimLabel = Lang.s("area.drag_size", wChunks, hChunks, wChunks * 16, hChunks * 16);
+            int lw = this.font.width(dimLabel) + 12;
+            int lx = Math.max(6, Math.min(this.width - lw - 6, mouseX + 12));
+            int ly = Math.max(TOP_BAR + 26, Math.min(this.height - BOTTOM_BAR - 22, mouseY + 12));
+            g.fill(lx - 1, ly - 1, lx + lw + 1, ly + 17, 0xFF38D8FF);
+            g.fill(lx, ly, lx + lw, ly + 16, 0xF014161C);
+            g.text(this.font, dimLabel, lx + 6, ly + 4, 0xFFFFFFFF, true);
         }
 
         g.disableScissor();
@@ -347,7 +415,11 @@ public class MapScreen extends Screen {
             pinsX0 = dbX1 + 6;
             pinsX1 = drawTopButton(g, pinsX0, showPins ? Lang.s("button.pins_on") : Lang.s("button.pins_off"),
                     showPins ? 0xFF345E4A : 0xFF3A3D4A, showPins ? 0xFF477D63 : 0xFF505566, mouseX, mouseY);
-            endX = pinsX1;
+            areaX0 = pinsX1 + 6;
+            boolean areaHighlighted = selectingArea || AreaPlan.isActive();
+            areaX1 = drawTopButton(g, areaX0, Lang.s("button.area"),
+                    areaHighlighted ? 0xFF1F7A8C : 0xFF3A4B5C, areaHighlighted ? 0xFF2A9BB0 : 0xFF4E647A, mouseX, mouseY);
+            endX = areaX1;
         } else {
             btnX0 = 0;
             btnX1 = 0;
@@ -355,6 +427,8 @@ public class MapScreen extends Screen {
             dbX1 = 0;
             pinsX0 = 0;
             pinsX1 = 0;
+            areaX0 = 0;
+            areaX1 = 0;
         }
 
         setX0 = endX + 6;
@@ -377,6 +451,13 @@ public class MapScreen extends Screen {
             g.text(this.font, status, statusX, 7, statusColor, true);
         }
 
+        if (showAreaBar) {
+            drawAreaBar(g, player, mouseX, mouseY);
+        } else {
+            areaBarY0 = 0;
+            areaBarY1 = 0;
+        }
+
         if (!hasProject) {
             g.centeredText(this.font, Lang.s("map.hint_no_project"),
                     this.width / 2, this.height / 2 - 4, 0xFF808090);
@@ -394,15 +475,142 @@ public class MapScreen extends Screen {
                 this.height - BOTTOM_BAR + 5, 0xFFCCCCCC, true);
 
         if (toast != null && now < toastUntil) {
+            int toastY = showAreaBar ? areaBarY1 + 6 : TOP_BAR + 6;
             int tw = this.font.width(toast) + 16;
             int tx0 = (this.width - tw) / 2;
-            g.fill(tx0, TOP_BAR + 6, tx0 + tw, TOP_BAR + 24, 0xE0101015);
-            g.text(this.font, toast, tx0 + 8, TOP_BAR + 11, 0xFF70FF90, true);
+            g.fill(tx0, toastY, tx0 + tw, toastY + 18, 0xE0101015);
+            g.text(this.font, toast, tx0 + 8, toastY + 5, 0xFF70FF90, true);
         }
 
         if (hoveredPin != null) {
             drawPinTooltip(g, hoveredPin, mouseX, mouseY);
         }
+    }
+
+    private void drawPlannedAreaDev(GuiGraphicsExtractor g, Map<Long, MapCache.ChunkColors> cache,
+                                    LocalPlayer player, double mapCX, double mapCY,
+                                    int minCx, int maxCx, int minCz, int maxCz) {
+        int aMinX = AreaPlan.minCx();
+        int aMaxX = AreaPlan.maxCx();
+        int aMinZ = AreaPlan.minCz();
+        int aMaxZ = AreaPlan.maxCz();
+
+        int vMinX = Math.max(aMinX, minCx);
+        int vMaxX = Math.min(aMaxX, maxCx);
+        int vMinZ = Math.max(aMinZ, minCz);
+        int vMaxZ = Math.min(aMaxZ, maxCz);
+
+        for (int cz = vMinZ; cz <= vMaxZ; cz++) {
+            int runStart = Integer.MIN_VALUE;
+            for (int cx = vMinX; cx <= vMaxX + 1; cx++) {
+                boolean missing = cx <= vMaxX && !cache.containsKey(MapCache.key(cx, cz));
+                if (missing && runStart == Integer.MIN_VALUE) {
+                    runStart = cx;
+                } else if (!missing && runStart != Integer.MIN_VALUE) {
+                    int x0 = (int) Math.round((mapCX + (runStart * 16.0 - centerX) * scale) * dev);
+                    int x1 = (int) Math.round((mapCX + (cx * 16.0 - centerX) * scale) * dev);
+                    int y0 = (int) Math.round((mapCY + (cz * 16.0 - centerZ) * scale) * dev);
+                    int y1 = (int) Math.round((mapCY + ((cz + 1) * 16.0 - centerZ) * scale) * dev);
+                    fillI(g, x0, y0, x1, y1, 0x3620C8FF);
+                    runStart = Integer.MIN_VALUE;
+                }
+            }
+        }
+
+        int bx0 = (int) Math.round((mapCX + (aMinX * 16.0 - centerX) * scale) * dev);
+        int bx1 = (int) Math.round((mapCX + ((aMaxX + 1) * 16.0 - centerX) * scale) * dev);
+        int by0 = (int) Math.round((mapCY + (aMinZ * 16.0 - centerZ) * scale) * dev);
+        int by1 = (int) Math.round((mapCY + ((aMaxZ + 1) * 16.0 - centerZ) * scale) * dev);
+        int t = Math.max(2, (int) Math.round(dev));
+        fillI(g, bx0, by0, bx1, by0 + t, 0xEE38D8FF);
+        fillI(g, bx0, by1 - t, bx1, by1, 0xEE38D8FF);
+        fillI(g, bx0, by0, bx0 + t, by1, 0xEE38D8FF);
+        fillI(g, bx1 - t, by0, bx1, by1, 0xEE38D8FF);
+
+        AreaPlan.Progress prog = AreaPlan.computeProgress(player.blockPosition().getX() >> 4, player.blockPosition().getZ() >> 4);
+        if (prog.hasMissing()) {
+            int nx0 = (int) Math.round((mapCX + (prog.nearestCx() * 16.0 - centerX) * scale) * dev);
+            int nx1 = (int) Math.round((mapCX + ((prog.nearestCx() + 1) * 16.0 - centerX) * scale) * dev);
+            int ny0 = (int) Math.round((mapCY + (prog.nearestCz() * 16.0 - centerZ) * scale) * dev);
+            int ny1 = (int) Math.round((mapCY + ((prog.nearestCz() + 1) * 16.0 - centerZ) * scale) * dev);
+            int pulseColor = (((System.currentTimeMillis() / 300) & 1) == 0) ? 0xFFFFD070 : 0xFFFFFFFF;
+            fillI(g, nx0, ny0, nx1, ny0 + t, pulseColor);
+            fillI(g, nx0, ny1 - t, nx1, ny1, pulseColor);
+            fillI(g, nx0, ny0, nx0 + t, ny1, pulseColor);
+            fillI(g, nx1 - t, ny0, nx1, ny1, pulseColor);
+        }
+    }
+
+    private void drawAreaBar(GuiGraphicsExtractor g, LocalPlayer player, int mouseX, int mouseY) {
+        areaBarY0 = TOP_BAR;
+        areaBarY1 = TOP_BAR + 20;
+        g.fill(0, areaBarY0, this.width, areaBarY1, 0xE814161C);
+        g.fill(0, areaBarY1 - 1, this.width, areaBarY1, 0xFF3A3A48);
+
+        abRedrawX0 = 0;
+        abRedrawX1 = 0;
+        abHudX0 = 0;
+        abHudX1 = 0;
+        abAutoX0 = 0;
+        abAutoX1 = 0;
+        abClearX0 = 0;
+        abClearX1 = 0;
+
+        int cy = areaBarY0 + 6;
+        if (selectingArea) {
+            g.text(this.font, Lang.s("area.select_hint"), 8, cy, 0xFF38D8FF, true);
+            String cancelLabel = Lang.s("common.cancel");
+            abClearX1 = this.width - 8;
+            abClearX0 = abClearX1 - this.font.width(cancelLabel) - 12;
+            drawMiniButton(g, abClearX0, abClearX1, areaBarY0 + 2, areaBarY1 - 3, cancelLabel,
+                    0xFF5A2A2A, 0xFF7A3838, mouseX, mouseY);
+            return;
+        }
+
+        AreaPlan.Progress prog = AreaPlan.computeProgress(player.blockPosition().getX() >> 4, player.blockPosition().getZ() >> 4);
+        String pct = String.format(Locale.ROOT, "%.1f%%", prog.percent());
+        String summary = Lang.s("area.bar_summary", prog.recorded(), prog.total(), pct, prog.remaining());
+        int summaryColor = prog.remaining() == 0 && prog.total() > 0 ? 0xFF70FF90 : 0xFFFFFFFF;
+        g.text(this.font, summary, 8, cy, summaryColor, true);
+
+        int by0 = areaBarY0 + 2;
+        int by1 = areaBarY1 - 3;
+        int rx = this.width - 8;
+
+        String clearTxt = Lang.s("area.btn_clear");
+        abClearX1 = rx;
+        abClearX0 = abClearX1 - this.font.width(clearTxt) - 10;
+        drawMiniButton(g, abClearX0, abClearX1, by0, by1, clearTxt, 0xFF5A2A2A, 0xFF7A3838, mouseX, mouseY);
+        rx = abClearX0 - 4;
+
+        String autoTxt = Lang.s("area.btn_autostop", AreaPlan.isAutoStop() ? Lang.s("common.on") : Lang.s("common.off"));
+        abAutoX1 = rx;
+        abAutoX0 = abAutoX1 - this.font.width(autoTxt) - 10;
+        drawMiniButton(g, abAutoX0, abAutoX1, by0, by1, autoTxt,
+                AreaPlan.isAutoStop() ? 0xFF2E6B48 : 0xFF262A34,
+                AreaPlan.isAutoStop() ? 0xFF3E8C5E : 0xFF363C4A, mouseX, mouseY);
+        rx = abAutoX0 - 4;
+
+        String hudTxt = Lang.s("area.btn_hud", AreaPlan.isHudVisible() ? Lang.s("common.on") : Lang.s("common.off"));
+        abHudX1 = rx;
+        abHudX0 = abHudX1 - this.font.width(hudTxt) - 10;
+        drawMiniButton(g, abHudX0, abHudX1, by0, by1, hudTxt,
+                AreaPlan.isHudVisible() ? 0xFF1F6A7A : 0xFF262A34,
+                AreaPlan.isHudVisible() ? 0xFF2B8AA0 : 0xFF363C4A, mouseX, mouseY);
+        rx = abHudX0 - 4;
+
+        String redrawTxt = Lang.s("area.btn_redraw");
+        abRedrawX1 = rx;
+        abRedrawX0 = abRedrawX1 - this.font.width(redrawTxt) - 10;
+        drawMiniButton(g, abRedrawX0, abRedrawX1, by0, by1, redrawTxt, 0xFF2E384D, 0xFF42516E, mouseX, mouseY);
+    }
+
+    private void drawMiniButton(GuiGraphicsExtractor g, int x0, int x1, int y0, int y1,
+                                String text, int bg, int bgHover, int mouseX, int mouseY) {
+        boolean hover = mouseX >= x0 && mouseX < x1 && mouseY >= y0 && mouseY < y1;
+        g.fill(x0, y0, x1, y1, 0xFF5A6074);
+        g.fill(x0 + 1, y0 + 1, x1 - 1, y1 - 1, hover ? bgHover : bg);
+        g.text(this.font, text, x0 + 5, y0 + 4, 0xFFFFFFFF, true);
     }
 
     private void drawContainerPins(GuiGraphicsExtractor g, String dimensionId,
@@ -688,8 +896,10 @@ public class MapScreen extends Screen {
 
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean isDoubleClick) {
-        if (event.button() == InputConstants.MOUSE_BUTTON_LEFT && event.y() >= btnY0 && event.y() < btnY1) {
-            double mx = event.x();
+        double mx = event.x();
+        double my = event.y();
+
+        if (event.button() == InputConstants.MOUSE_BUTTON_LEFT && my >= btnY0 && my < btnY1) {
             if (mx >= newX0 && mx < newX1) {
                 if (recordingBlocks()) {
                     return true;
@@ -716,21 +926,71 @@ public class MapScreen extends Screen {
                 showPins = !showPins;
                 return true;
             }
+            if (areaX1 > areaX0 && mx >= areaX0 && mx < areaX1) {
+                selectingArea = !selectingArea;
+                draggingArea = false;
+                return true;
+            }
             if (mx >= setX0 && mx < setX1) {
                 Minecraft.getInstance().setScreenAndShow(new SettingsScreen(this));
                 return true;
             }
         }
-        if (event.button() == InputConstants.MOUSE_BUTTON_RIGHT) {
-            recenterOnPlayer();
+
+        if (event.button() == InputConstants.MOUSE_BUTTON_LEFT && areaBarY1 > areaBarY0
+                && my >= areaBarY0 && my < areaBarY1) {
+            if (selectingArea) {
+                if (mx >= abClearX0 && mx < abClearX1) {
+                    selectingArea = false;
+                    draggingArea = false;
+                }
+                return true;
+            }
+            if (mx >= abRedrawX0 && mx < abRedrawX1) {
+                selectingArea = true;
+                draggingArea = false;
+                return true;
+            }
+            if (mx >= abHudX0 && mx < abHudX1) {
+                AreaPlan.toggleHud();
+                return true;
+            }
+            if (mx >= abAutoX0 && mx < abAutoX1) {
+                AreaPlan.toggleAutoStop();
+                return true;
+            }
+            if (mx >= abClearX0 && mx < abClearX1) {
+                AreaPlan.clearPlan();
+                showToast(Lang.s("area.cleared"));
+                return true;
+            }
             return true;
         }
+
+        if (event.button() == InputConstants.MOUSE_BUTTON_RIGHT) {
+            if (selectingArea) {
+                selectingArea = false;
+                draggingArea = false;
+            } else {
+                recenterOnPlayer();
+            }
+            return true;
+        }
+
         if (event.button() == InputConstants.MOUSE_BUTTON_LEFT
-                && event.y() >= TOP_BAR && event.y() < this.height - BOTTOM_BAR) {
+                && my >= TOP_BAR && my < this.height - BOTTOM_BAR) {
+            if (selectingArea && ProjectMap.isOpen()) {
+                draggingArea = true;
+                areaStartCx = screenToChunkX(mx);
+                areaStartCz = screenToChunkZ(my);
+                areaEndCx = areaStartCx;
+                areaEndCz = areaStartCz;
+                return true;
+            }
             draggingMap = true;
             dragged = false;
-            dragStartX = event.x();
-            dragStartY = event.y();
+            dragStartX = mx;
+            dragStartY = my;
             return true;
         }
         return super.mouseClicked(event, isDoubleClick);
@@ -779,6 +1039,11 @@ public class MapScreen extends Screen {
 
     @Override
     public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
+        if (event.button() == InputConstants.MOUSE_BUTTON_LEFT && draggingArea) {
+            areaEndCx = screenToChunkX(event.x());
+            areaEndCz = screenToChunkZ(event.y());
+            return true;
+        }
         if (event.button() == InputConstants.MOUSE_BUTTON_LEFT && draggingMap) {
             if (!dragged && Math.hypot(event.x() - dragStartX, event.y() - dragStartY) >= 4.0) {
                 dragged = true;
@@ -792,6 +1057,19 @@ public class MapScreen extends Screen {
 
     @Override
     public boolean mouseReleased(MouseButtonEvent event) {
+        if (event.button() == InputConstants.MOUSE_BUTTON_LEFT && draggingArea) {
+            draggingArea = false;
+            selectingArea = false;
+            areaEndCx = screenToChunkX(event.x());
+            areaEndCz = screenToChunkZ(event.y());
+            var level = Minecraft.getInstance().level;
+            if (level != null && ProjectMap.isOpen()) {
+                String dim = level.dimension().identifier().toString();
+                AreaPlan.setFromChunks(dim, areaStartCx, areaStartCz, areaEndCx, areaEndCz);
+                showToast(Lang.s("area.set_toast", AreaPlan.totalChunks()));
+            }
+            return true;
+        }
         if (event.button() == InputConstants.MOUSE_BUTTON_LEFT && draggingMap) {
             draggingMap = false;
             if (!dragged && hoveredPin != null && ProjectMap.isOpen()) {
@@ -824,6 +1102,16 @@ public class MapScreen extends Screen {
         centerX = blockX - (mouseX - mapCX) / scale;
         centerZ = blockZ - (mouseY - mapCY) / scale;
         return true;
+    }
+
+    @Override
+    public void onClose() {
+        if (selectingArea) {
+            selectingArea = false;
+            draggingArea = false;
+            return;
+        }
+        super.onClose();
     }
 
     @Override
