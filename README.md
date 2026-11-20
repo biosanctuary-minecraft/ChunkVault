@@ -2,6 +2,9 @@
 
 **ChunkVault records the world you explore on a multiplayer server into a normal singleplayer save.** Walk around, open chests, and play the result later, with or without the mod installed.
 
+<img width="1024" height="434" alt="изображение" src="https://github.com/user-attachments/assets/9138078e-055b-4159-960c-872298b693e9" />
+
+
 ## Features
 
 - **Chunk recording**: every chunk your client loads is written into a vanilla world save, including terrain, blocks and block entities.
