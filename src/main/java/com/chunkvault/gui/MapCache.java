@@ -272,7 +272,7 @@ public final class MapCache {
                 || block == Blocks.SOUL_TORCH || block == Blocks.SOUL_WALL_TORCH
                 || block == Blocks.REDSTONE_TORCH || block == Blocks.REDSTONE_WALL_TORCH
                 || block == Blocks.REDSTONE_WIRE || block == Blocks.TRIPWIRE
-                || block == Blocks.TRIPWIRE_HOOK || block == Blocks.STRING
+                || block == Blocks.TRIPWIRE_HOOK
                 || block == Blocks.BROWN_MUSHROOM || block == Blocks.RED_MUSHROOM
                 || block == Blocks.CRIMSON_FUNGUS || block == Blocks.WARPED_FUNGUS
                 || block == Blocks.CRIMSON_ROOTS || block == Blocks.WARPED_ROOTS
@@ -283,7 +283,7 @@ public final class MapCache {
                 || block == Blocks.LEAF_LITTER || block == Blocks.WILDFLOWERS) {
             return true;
         }
-        if (state.is(BlockTags.FLOWERS) || state.is(BlockTags.RAILS) || state.is(BlockTags.SAPLINGS)) {
+        if (state.is(BlockTags.FLOWERS) || state.is(BlockTags.RAILS)) {
             return true;
         }
         return state.getMapColor(level, pos) == MapColor.NONE;
