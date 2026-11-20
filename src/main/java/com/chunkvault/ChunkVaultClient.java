@@ -1,5 +1,6 @@
 package com.chunkvault;
 
+import com.chunkvault.gui.AreaHudOverlay;
 import com.chunkvault.gui.ContainerDatabaseScreen;
 import com.chunkvault.gui.MapCache;
 import com.chunkvault.gui.MapScreen;
@@ -7,10 +8,12 @@ import com.chunkvault.gui.ProjectMap;
 import com.chunkvault.gui.SettingsScreen;
 import com.chunkvault.save.PlayerDataWriter;
 import com.chunkvault.save.VoidWorldGenBuilder;
+import com.chunkvault.state.AreaPlan;
 import com.chunkvault.state.AutoRecord;
 import com.chunkvault.state.LastInteraction;
 import com.chunkvault.state.RecordingState;
 import com.mojang.blaze3d.platform.InputConstants;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -57,6 +60,8 @@ public class ChunkVaultClient implements ClientModInitializer {
                 KEY_CATEGORY
         ));
 
+        AreaHudOverlay.register();
+
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
             LastInteraction.clear();
             if (!RecordingState.get().isActive()) {
@@ -97,7 +102,11 @@ public class ChunkVaultClient implements ClientModInitializer {
                 }
             }
 
-            if (++tickCounter % 40 == 0 && RecordingState.get().isActive()) {
+            tickCounter++;
+            if (tickCounter % 10 == 0 && RecordingState.get().isActive()) {
+                AreaPlan.checkAutoStop();
+            }
+            if (tickCounter % 40 == 0 && RecordingState.get().isActive()) {
                 var manager = RecordingState.get().saveManager();
                 var level = Minecraft.getInstance().level;
                 if (manager != null && level != null) {
@@ -116,6 +125,24 @@ public class ChunkVaultClient implements ClientModInitializer {
                         .then(literal("map").executes(ctx -> map(ctx.getSource())))
                         .then(literal("chests").executes(ctx -> chests(ctx.getSource())))
                         .then(literal("settings").executes(ctx -> settings(ctx.getSource())))
+                        .then(literal("area")
+                                .then(literal("set")
+                                        .then(argument("x1", IntegerArgumentType.integer())
+                                                .then(argument("z1", IntegerArgumentType.integer())
+                                                        .then(argument("x2", IntegerArgumentType.integer())
+                                                                .then(argument("z2", IntegerArgumentType.integer())
+                                                                        .executes(ctx -> areaSet(ctx.getSource(),
+                                                                                IntegerArgumentType.getInteger(ctx, "x1"),
+                                                                                IntegerArgumentType.getInteger(ctx, "z1"),
+                                                                                IntegerArgumentType.getInteger(ctx, "x2"),
+                                                                                IntegerArgumentType.getInteger(ctx, "z2"))))))))
+                                .then(literal("radius")
+                                        .then(argument("blocks", IntegerArgumentType.integer(16, 4096))
+                                                .executes(ctx -> areaRadius(ctx.getSource(),
+                                                        IntegerArgumentType.getInteger(ctx, "blocks")))))
+                                .then(literal("clear").executes(ctx -> areaClear(ctx.getSource())))
+                                .then(literal("hud").executes(ctx -> areaHud(ctx.getSource())))
+                                .then(literal("autostop").executes(ctx -> areaAutoStop(ctx.getSource()))))
                         .then(literal("fixworld")
                                 .then(argument("name", StringArgumentType.word())
                                         .executes(ctx -> fixWorld(ctx.getSource(), StringArgumentType.getString(ctx, "name")))))
@@ -129,6 +156,7 @@ public class ChunkVaultClient implements ClientModInitializer {
             return -1;
         }
         ProjectMap.ensureOpen(RecordingState.sanitize(name));
+        AreaPlan.resetAutoStopTrigger();
         var level = Minecraft.getInstance().level;
         if (level != null) {
             try {
@@ -204,6 +232,55 @@ public class ChunkVaultClient implements ClientModInitializer {
             }
         }
         return count;
+    }
+
+    private int areaSet(FabricClientCommandSource source, int x1, int z1, int x2, int z2) {
+        if (!ProjectMap.isOpen()) {
+            source.sendFeedback(Component.literal("§c[ChunkVault] " + Lang.s("db.no_project")));
+            return 0;
+        }
+        var level = Minecraft.getInstance().level;
+        if (level == null) {
+            return 0;
+        }
+        AreaPlan.setFromBlocks(level.dimension().identifier().toString(), x1, z1, x2, z2);
+        source.sendFeedback(Component.literal("§a[ChunkVault] " + Lang.s("area.set_toast", AreaPlan.totalChunks())));
+        return 1;
+    }
+
+    private int areaRadius(FabricClientCommandSource source, int radiusBlocks) {
+        if (!ProjectMap.isOpen()) {
+            source.sendFeedback(Component.literal("§c[ChunkVault] " + Lang.s("db.no_project")));
+            return 0;
+        }
+        var mc = Minecraft.getInstance();
+        if (mc.level == null || mc.player == null) {
+            return 0;
+        }
+        AreaPlan.setRadiusBlocks(mc.level.dimension().identifier().toString(),
+                mc.player.blockPosition().getX(), mc.player.blockPosition().getZ(), radiusBlocks);
+        source.sendFeedback(Component.literal("§a[ChunkVault] " + Lang.s("area.set_toast", AreaPlan.totalChunks())));
+        return 1;
+    }
+
+    private int areaClear(FabricClientCommandSource source) {
+        AreaPlan.clearPlan();
+        source.sendFeedback(Component.literal("§e[ChunkVault] " + Lang.s("area.cleared")));
+        return 1;
+    }
+
+    private int areaHud(FabricClientCommandSource source) {
+        boolean on = AreaPlan.toggleHud();
+        source.sendFeedback(Component.literal("§b[ChunkVault] "
+                + Lang.s("area.btn_hud", on ? Lang.s("common.on") : Lang.s("common.off"))));
+        return 1;
+    }
+
+    private int areaAutoStop(FabricClientCommandSource source) {
+        boolean on = AreaPlan.toggleAutoStop();
+        source.sendFeedback(Component.literal("§b[ChunkVault] "
+                + Lang.s("area.btn_autostop", on ? Lang.s("common.on") : Lang.s("common.off"))));
+        return 1;
     }
 
     private int fixWorld(FabricClientCommandSource source, String name) {
