@@ -1,6 +1,7 @@
 package com.chunkvault.gui;
 
 import com.chunkvault.save.ContainerDatabase;
+import com.chunkvault.state.AreaPlan;
 import net.fabricmc.loader.api.FabricLoader;
 
 import java.io.BufferedInputStream;
@@ -15,6 +16,7 @@ import java.util.ArrayList;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
@@ -27,6 +29,7 @@ public final class ProjectMap {
     private static final Map<String, Map<Long, MapCache.ChunkColors>> CHUNKS = new ConcurrentHashMap<>();
     private static final Map<String, Set<Long>> DIRTY = new ConcurrentHashMap<>();
     private static final Map<String, Set<Long>> REGION_KEYS = new ConcurrentHashMap<>();
+    private static final AtomicInteger CHUNK_REV = new AtomicInteger();
     private static volatile int session;
     private static volatile boolean storeDirty;
     private static int tickCounter;
@@ -48,6 +51,10 @@ public final class ProjectMap {
 
     public static int sessionCounter() {
         return session;
+    }
+
+    public static int chunkRevision() {
+        return CHUNK_REV.get();
     }
 
     public static Map<Long, MapCache.ChunkColors> forDimension(String dimensionId) {
@@ -91,6 +98,8 @@ public final class ProjectMap {
             Path projectDir = root().resolve(folder);
             load(projectDir.resolve("chunkvault_map"));
             ContainerDatabase.loadForProject(projectDir);
+            AreaPlan.loadForProject(projectDir);
+            CHUNK_REV.incrementAndGet();
         }
     }
 
@@ -109,8 +118,10 @@ public final class ProjectMap {
             DIRTY.clear();
             REGION_KEYS.clear();
             ContainerDatabase.clear();
+            AreaPlan.clear();
             session++;
             name = null;
+            CHUNK_REV.incrementAndGet();
         }
     }
 
@@ -127,6 +138,7 @@ public final class ProjectMap {
         dirtyChunks(dimensionId).add(k);
         regionKeys(dimensionId).add(MapCache.key(cx >> 4, cz >> 4));
         storeDirty = true;
+        CHUNK_REV.incrementAndGet();
     }
 
     public static void tick() {
