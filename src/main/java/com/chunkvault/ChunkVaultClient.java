@@ -142,7 +142,9 @@ public class ChunkVaultClient implements ClientModInitializer {
                                                         IntegerArgumentType.getInteger(ctx, "blocks")))))
                                 .then(literal("clear").executes(ctx -> areaClear(ctx.getSource())))
                                 .then(literal("hud").executes(ctx -> areaHud(ctx.getSource())))
-                                .then(literal("autostop").executes(ctx -> areaAutoStop(ctx.getSource()))))
+                                .then(literal("autostop").executes(ctx -> areaAutoStop(ctx.getSource())))
+                                .then(literal("clip").executes(ctx -> areaClip(ctx.getSource())))
+                                .then(literal("trim").executes(ctx -> areaTrim(ctx.getSource()))))
                         .then(literal("fixworld")
                                 .then(argument("name", StringArgumentType.word())
                                         .executes(ctx -> fixWorld(ctx.getSource(), StringArgumentType.getString(ctx, "name")))))
@@ -224,10 +226,11 @@ public class ChunkVaultClient implements ClientModInitializer {
                 int cz = centerZ + dz;
                 var chunk = level.getChunk(cx, cz);
                 if (chunk instanceof LevelChunk levelChunk && !(chunk instanceof EmptyLevelChunk)) {
-                    MapCache.update(level, levelChunk);
-                    manager.saveChunk(level, levelChunk);
-                    ProjectMap.onChunkRecorded(dimensionId, cx, cz);
-                    count++;
+                    if (manager.saveChunk(level, levelChunk)) {
+                        MapCache.update(level, levelChunk);
+                        ProjectMap.onChunkRecorded(dimensionId, cx, cz);
+                        count++;
+                    }
                 }
             }
         }
@@ -280,6 +283,32 @@ public class ChunkVaultClient implements ClientModInitializer {
         boolean on = AreaPlan.toggleAutoStop();
         source.sendFeedback(Component.literal("§b[ChunkVault] "
                 + Lang.s("area.btn_autostop", on ? Lang.s("common.on") : Lang.s("common.off"))));
+        return 1;
+    }
+
+    private int areaClip(FabricClientCommandSource source) {
+        boolean on = AreaPlan.toggleClipToArea();
+        source.sendFeedback(Component.literal("§b[ChunkVault] "
+                + Lang.s("area.btn_clip", on ? Lang.s("common.on") : Lang.s("common.off"))));
+        return 1;
+    }
+
+    private int areaTrim(FabricClientCommandSource source) {
+        if (RecordingState.get().isActive()) {
+            source.sendFeedback(Component.literal("§c[ChunkVault] " + Lang.s("toast.stop_first")));
+            return 0;
+        }
+        if (!AreaPlan.isActive()) {
+            source.sendFeedback(Component.literal("§e[ChunkVault] " + Lang.s("area.trim_empty")));
+            return 0;
+        }
+        var res = AreaPlan.trimProjectToArea();
+        if (res.removedChunks() == 0 && res.removedContainers() == 0) {
+            source.sendFeedback(Component.literal("§e[ChunkVault] " + Lang.s("area.trim_empty")));
+        } else {
+            source.sendFeedback(Component.literal("§a[ChunkVault] "
+                    + Lang.s("area.trimmed", res.removedChunks(), res.removedContainers())));
+        }
         return 1;
     }
 
