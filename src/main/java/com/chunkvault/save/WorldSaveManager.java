@@ -120,6 +120,7 @@ public final class WorldSaveManager {
             return;
         }
         try {
+            ContainerDatabase.putUnopenedBatch(level, chunk.getBlockEntities().values());
             CompoundTag tag = ChunkNbtWriter.write(level, chunk,
                     (pos, be) -> containerOverride(level, pos, be));
 
