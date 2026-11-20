@@ -1,5 +1,6 @@
 package com.chunkvault.save;
 
+import com.chunkvault.state.AreaPlan;
 import com.chunkvault.state.ChunkVaultSettings;
 import net.minecraft.SharedConstants;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -91,6 +92,11 @@ public final class WorldSaveManager {
     }
 
     public void rememberContainer(ClientLevel level, BlockEntity be) {
+        String dim = level.dimension().identifier().toString();
+        BlockPos pos = be.getBlockPos();
+        if (!AreaPlan.allowsBlock(dim, pos.getX(), pos.getZ())) {
+            return;
+        }
         ContainerDatabase.put(level, be);
     }
 
@@ -115,24 +121,31 @@ public final class WorldSaveManager {
         return region;
     }
 
-    public void saveChunk(ClientLevel level, LevelChunk chunk) {
+    public boolean saveChunk(ClientLevel level, LevelChunk chunk) {
         if (closed) {
-            return;
+            return false;
+        }
+        int chunkX = chunk.getPos().x();
+        int chunkZ = chunk.getPos().z();
+        String dim = level.dimension().identifier().toString();
+        if (!AreaPlan.allowsChunk(dim, chunkX, chunkZ)) {
+            return false;
         }
         try {
             ContainerDatabase.putUnopenedBatch(level, chunk.getBlockEntities().values());
             CompoundTag tag = ChunkNbtWriter.write(level, chunk,
                     (pos, be) -> containerOverride(level, pos, be));
 
-            int chunkX = chunk.getPos().x();
-            int chunkZ = chunk.getPos().z();
             String regionFolder = regionFolderFor(level);
-            recordedChunks.add(level.dimension().identifier() + ":" + chunkX + "," + chunkZ);
+            recordedChunks.add(dim + ":" + chunkX + "," + chunkZ);
 
             ioExecutor.execute(() -> writeChunkAsync(regionFolder, chunkX, chunkZ, tag));
+            return true;
         } catch (RejectedExecutionException ignored) {
+            return false;
         } catch (Exception e) {
             System.err.println("[ChunkVault] Failed to save chunk " + chunk.getPos() + ": " + e);
+            return false;
         }
     }
 
