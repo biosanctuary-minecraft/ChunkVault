@@ -1,5 +1,6 @@
 package com.chunkvault.save;
 
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -23,11 +24,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -53,6 +56,7 @@ public final class ContainerDatabase {
             long updatedAt,
             String chestType,
             BlockPos connectedPos,
+            boolean opened,
             CompoundTag blockEntityTag
     ) {
         public BlockPos pos() {
@@ -106,6 +110,7 @@ public final class ContainerDatabase {
     private static volatile Map<String, Map<Long, List<ContainerEntry>>> byChunk = Map.of();
     private static volatile Map<String, Map<Long, List<ContainerEntry>>> byColumn = Map.of();
     private static volatile Path activeProjectDir;
+    private static volatile boolean showUnopened = loadShowUnopenedPref();
     private static final AtomicInteger REVISION = new AtomicInteger();
 
     private static final ExecutorService IO = Executors.newSingleThreadExecutor(r -> {
@@ -122,6 +127,52 @@ public final class ContainerDatabase {
 
     public static int totalCount() {
         return ENTRIES.size();
+    }
+
+    public static boolean showUnopened() {
+        return showUnopened;
+    }
+
+    public static boolean toggleShowUnopened() {
+        showUnopened = !showUnopened;
+        saveShowUnopenedPref(showUnopened);
+        REVISION.incrementAndGet();
+        return showUnopened;
+    }
+
+    private static Path prefsFile() {
+        return FabricLoader.getInstance().getConfigDir().resolve("chunkvault_containers.properties");
+    }
+
+    private static boolean loadShowUnopenedPref() {
+        try {
+            Path f = prefsFile();
+            if (!Files.isRegularFile(f)) {
+                return true;
+            }
+            Properties p = new Properties();
+            try (var in = Files.newInputStream(f)) {
+                p.load(in);
+            }
+            return Boolean.parseBoolean(p.getProperty("showUnopened", "true"));
+        } catch (Exception ignored) {
+            return true;
+        }
+    }
+
+    private static void saveShowUnopenedPref(boolean value) {
+        IO.execute(() -> {
+            try {
+                Path f = prefsFile();
+                Files.createDirectories(f.getParent());
+                Properties p = new Properties();
+                p.setProperty("showUnopened", Boolean.toString(value));
+                try (var out = Files.newOutputStream(f)) {
+                    p.store(out, "ChunkVault Container Preferences");
+                }
+            } catch (Exception ignored) {
+            }
+        });
     }
 
     public static String keyOf(String dimension, int x, int y, int z) {
@@ -164,54 +215,13 @@ public final class ContainerDatabase {
 
     public static void put(ClientLevel level, BlockEntity be) {
         try {
-            CompoundTag tag = be.saveWithFullMetadata(level.registryAccess());
-            String dimension = level.dimension().identifier().toString();
-            BlockPos pos = be.getBlockPos();
-            BlockState state = be.getBlockState();
-            String blockId = blockIdOf(be);
-
-            String customName = "";
-            if (be instanceof Nameable nameable && nameable.hasCustomName() && nameable.getCustomName() != null) {
-                customName = nameable.getCustomName().getString();
+            ContainerEntry entry = buildEntry(level, be, true);
+            if (entry == null) {
+                return;
             }
-            if (customName.isEmpty()) {
-                customName = extractCustomName(tag);
-            }
-
-            int slotCount;
-            int filledSlots = 0;
-            if (be instanceof Container container) {
-                slotCount = container.getContainerSize();
-                for (int i = 0; i < slotCount; i++) {
-                    if (!container.getItem(i).isEmpty()) {
-                        filledSlots++;
-                    }
-                }
-            } else {
-                slotCount = defaultSlotCount(blockId);
-                filledSlots = countItemsInTag(tag);
-            }
-
-            String chestType = "";
-            BlockPos connectedPos = null;
-            if (state.getBlock() instanceof ChestBlock) {
-                ChestType type = state.getValue(ChestBlock.TYPE);
-                chestType = type.getSerializedName();
-                if (type != ChestType.SINGLE) {
-                    connectedPos = pos.relative(ChestBlock.getConnectedDirection(state));
-                }
-            }
-
-            String key = keyOf(dimension, pos.getX(), pos.getY(), pos.getZ());
-            ContainerEntry entry = new ContainerEntry(
-                    key, dimension, pos.getX(), pos.getY(), pos.getZ(),
-                    blockId, customName, slotCount, filledSlots,
-                    System.currentTimeMillis(), chestType, connectedPos, tag
-            );
-
             Path targetDir;
             synchronized (INDEX_LOCK) {
-                ENTRIES.put(key, entry);
+                ENTRIES.put(entry.key(), entry);
                 rebuildIndexesLocked();
                 REVISION.incrementAndGet();
                 targetDir = activeProjectDir;
@@ -224,10 +234,108 @@ public final class ContainerDatabase {
         }
     }
 
+    public static void putUnopenedBatch(ClientLevel level, Collection<BlockEntity> blockEntities) {
+        if (blockEntities == null || blockEntities.isEmpty()) {
+            return;
+        }
+        List<ContainerEntry> added = null;
+        String dimension = level.dimension().identifier().toString();
+        for (BlockEntity be : blockEntities) {
+            if (!(be instanceof Container container) || container.getContainerSize() < 3) {
+                continue;
+            }
+            BlockPos pos = be.getBlockPos();
+            String key = keyOf(dimension, pos.getX(), pos.getY(), pos.getZ());
+            if (ENTRIES.containsKey(key)) {
+                continue;
+            }
+            try {
+                ContainerEntry entry = buildEntry(level, be, false);
+                if (entry != null) {
+                    if (added == null) {
+                        added = new ArrayList<>();
+                    }
+                    added.add(entry);
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        if (added == null || added.isEmpty()) {
+            return;
+        }
+        Path targetDir;
+        boolean changed = false;
+        synchronized (INDEX_LOCK) {
+            for (ContainerEntry e : added) {
+                if (!ENTRIES.containsKey(e.key())) {
+                    ENTRIES.put(e.key(), e);
+                    changed = true;
+                }
+            }
+            if (changed) {
+                rebuildIndexesLocked();
+                REVISION.incrementAndGet();
+            }
+            targetDir = activeProjectDir;
+        }
+        if (changed && targetDir != null) {
+            saveAsync(targetDir);
+        }
+    }
+
+    private static ContainerEntry buildEntry(ClientLevel level, BlockEntity be, boolean opened) {
+        CompoundTag tag = be.saveWithFullMetadata(level.registryAccess());
+        String dimension = level.dimension().identifier().toString();
+        BlockPos pos = be.getBlockPos();
+        BlockState state = be.getBlockState();
+        String blockId = blockIdOf(be);
+
+        String customName = "";
+        if (be instanceof Nameable nameable && nameable.hasCustomName() && nameable.getCustomName() != null) {
+            customName = nameable.getCustomName().getString();
+        }
+        if (customName.isEmpty()) {
+            customName = extractCustomName(tag);
+        }
+
+        int slotCount;
+        int filledSlots = 0;
+        if (be instanceof Container container) {
+            slotCount = container.getContainerSize();
+            if (opened) {
+                for (int i = 0; i < slotCount; i++) {
+                    if (!container.getItem(i).isEmpty()) {
+                        filledSlots++;
+                    }
+                }
+            }
+        } else {
+            slotCount = defaultSlotCount(blockId);
+            filledSlots = opened ? countItemsInTag(tag) : 0;
+        }
+
+        String chestType = "";
+        BlockPos connectedPos = null;
+        if (state.getBlock() instanceof ChestBlock) {
+            ChestType type = state.getValue(ChestBlock.TYPE);
+            chestType = type.getSerializedName();
+            if (type != ChestType.SINGLE) {
+                connectedPos = pos.relative(ChestBlock.getConnectedDirection(state));
+            }
+        }
+
+        String key = keyOf(dimension, pos.getX(), pos.getY(), pos.getZ());
+        return new ContainerEntry(
+                key, dimension, pos.getX(), pos.getY(), pos.getZ(),
+                blockId, customName, slotCount, filledSlots,
+                System.currentTimeMillis(), chestType, connectedPos, opened, tag
+        );
+    }
+
     public static CompoundTag overrideFor(ClientLevel level, BlockPos pos, BlockEntity be) {
         String key = keyOf(level.dimension().identifier().toString(), pos.getX(), pos.getY(), pos.getZ());
         ContainerEntry entry = ENTRIES.get(key);
-        if (entry == null || !entry.blockId().equals(blockIdOf(be))) {
+        if (entry == null || !entry.opened() || !entry.blockId().equals(blockIdOf(be))) {
             return null;
         }
         return entry.blockEntityTag().copy();
@@ -312,12 +420,19 @@ public final class ContainerDatabase {
     }
 
     public static int colorFor(ContainerEntry entry) {
-        return switch (entry.category()) {
+        int base = switch (entry.category()) {
             case CAT_SHULKERS -> 0xFFC864FF;
             case CAT_FURNACES -> 0xFFB8C0CC;
             case CAT_OTHER -> 0xFF55CCFF;
             default -> 0xFFFFB830;
         };
+        if (!entry.opened()) {
+            int r = ((base >> 16) & 0xFF) * 6 / 10;
+            int g = ((base >> 8) & 0xFF) * 6 / 10;
+            int b = (base & 0xFF) * 6 / 10;
+            return 0xFF000000 | (r << 16) | (g << 8) | b;
+        }
+        return base;
     }
 
     private static void rebuildIndexesLocked() {
@@ -363,6 +478,7 @@ public final class ContainerDatabase {
                 tag.putInt("slotCount", e.slotCount());
                 tag.putInt("filledSlots", e.filledSlots());
                 tag.putLong("updatedAt", e.updatedAt());
+                tag.putBoolean("opened", e.opened());
                 if (e.chestType() != null && !e.chestType().isEmpty()) {
                     tag.putString("chestType", e.chestType());
                 }
@@ -425,6 +541,7 @@ public final class ContainerDatabase {
                 int slotCount = entryTag.getInt("slotCount").orElse(defaultSlotCount(type));
                 int filledSlots = entryTag.getInt("filledSlots").orElse(countItemsInTag(data));
                 long updatedAt = entryTag.getLong("updatedAt").orElse(fallbackTime);
+                boolean opened = entryTag.getBoolean("opened").orElse(true);
                 String chestType = entryTag.getString("chestType").orElse("");
                 BlockPos connectedPos = null;
                 if (entryTag.contains("connX") && entryTag.contains("connY") && entryTag.contains("connZ")) {
@@ -436,7 +553,7 @@ public final class ContainerDatabase {
                 }
                 ENTRIES.put(key, new ContainerEntry(
                         key, parts[0], x, y, z, type, customName,
-                        slotCount, filledSlots, updatedAt, chestType, connectedPos, data
+                        slotCount, filledSlots, updatedAt, chestType, connectedPos, opened, data
                 ));
             }
         } catch (Exception e) {
