@@ -52,8 +52,6 @@ public class ContainerViewerScreen extends Screen {
     private String status = "";
     private long statusUntil;
 
-    private Button backToParentBtn;
-
     public ContainerViewerScreen(Screen parent, String dimension, int x, int z, String initialKey) {
         super(Lang.c("viewer.title"));
         this.parent = parent;
@@ -99,8 +97,13 @@ public class ContainerViewerScreen extends Screen {
         nestedSlots = null;
         ContainerDatabase.ContainerEntry entry = currentEntry();
         var level = Minecraft.getInstance().level;
-        if (entry != null && level != null) {
+        if (entry != null && level != null && entry.opened()) {
             decoded = ContainerContentReader.decode(entry, level.registryAccess());
+        } else if (entry != null) {
+            var partner = ContainerDatabase.partnerOf(entry);
+            boolean dbl = partner != null && entry.slotCount() == 27 && partner.slotCount() == 27;
+            int total = dbl ? 54 : entry.slotCount();
+            decoded = new ContainerContentReader.DecodedContainer(new ItemStack[total], total, 0, dbl);
         } else {
             decoded = new ContainerContentReader.DecodedContainer(new ItemStack[0], 0, 0, false);
         }
@@ -125,7 +128,7 @@ public class ContainerViewerScreen extends Screen {
 
         if (nestedShulker != null) {
             int third = (innerW - 12) / 3;
-            backToParentBtn = this.addRenderableWidget(Button.builder(Lang.c("viewer.back_parent"), b -> exitNestedShulker())
+            this.addRenderableWidget(Button.builder(Lang.c("viewer.back_parent"), b -> exitNestedShulker())
                     .bounds(btnX, btnY, third, 20)
                     .build());
             this.addRenderableWidget(Button.builder(Lang.c("viewer.copy_coords"), b -> copyCoords())
@@ -135,7 +138,6 @@ public class ContainerViewerScreen extends Screen {
                     .bounds(btnX + (third + 6) * 2, btnY, innerW - (third + 6) * 2, 20)
                     .build());
         } else {
-            backToParentBtn = null;
             int half = (innerW - 6) / 2;
             this.addRenderableWidget(Button.builder(Lang.c("viewer.copy_coords"), b -> copyCoords())
                     .bounds(btnX, btnY, half, 20)
@@ -394,9 +396,16 @@ public class ContainerViewerScreen extends Screen {
             g.text(this.font, fit(headerTitle, mainW - 16), mainX + 8, panelY + 8, 0xFFFFFFFF, true);
 
             String coords = "X:" + entry.x() + " Y:" + entry.y() + " Z:" + entry.z();
-            int filled = nestedShulker != null ? countNonEmpty(nestedSlots) : (decoded != null ? decoded.filledSlots() : 0);
-            int total = nestedShulker != null ? 27 : (decoded != null ? decoded.totalSlots() : 0);
-            String sub1 = coords + "  •  " + filled + "/" + total;
+            String sub1;
+            if (nestedShulker != null) {
+                sub1 = coords + "  •  " + countNonEmpty(nestedSlots) + "/27";
+            } else if (!entry.opened()) {
+                sub1 = coords + "  •  " + Lang.s("db.unopened_tag");
+            } else {
+                int filled = decoded != null ? decoded.filledSlots() : 0;
+                int total = decoded != null ? decoded.totalSlots() : 0;
+                sub1 = coords + "  •  " + filled + "/" + total;
+            }
             g.text(this.font, fit(sub1, mainW - 16), mainX + 8, panelY + 22, 0xFF9AA0B0, true);
 
             String dateStr = entry.updatedAt() > 0
@@ -413,49 +422,54 @@ public class ContainerViewerScreen extends Screen {
         g.fill(gridBoxX0 - 1, gridBoxY0 - 1, gridBoxX1 + 1, gridBoxY1 + 1, 0xFF2A2D38);
         g.fill(gridBoxX0, gridBoxY0, gridBoxX1, gridBoxY1, 0xFF0E1015);
 
-        if (nestedShulker == null && entry != null && decoded != null && decoded.totalSlots() == 3
-                && (entry.blockId().contains("furnace") || entry.blockId().endsWith(":smoker"))) {
-            g.centeredText(this.font, "→", mainX + mainW / 2 - 4, panelY + 85, 0xFF808090);
-        }
+        if (nestedShulker == null && entry != null && !entry.opened()) {
+            g.centeredText(this.font, fit(Lang.s("viewer.unopened_notice"), mainW - 24),
+                    mainX + mainW / 2, (gridBoxY0 + gridBoxY1) / 2 - 4, 0xFFFFD070);
+        } else {
+            if (nestedShulker == null && entry != null && decoded != null && decoded.totalSlots() == 3
+                    && (entry.blockId().contains("furnace") || entry.blockId().endsWith(":smoker"))) {
+                g.centeredText(this.font, "→", mainX + mainW / 2 - 4, panelY + 85, 0xFF808090);
+            }
 
-        ItemStack hoveredStack = null;
-        for (SlotRect slot : slotRects) {
-            int sx = slot.x();
-            int sy = slot.y();
-            boolean hover = mouseX >= sx && mouseX < sx + SLOT_SIZE && mouseY >= sy && mouseY < sy + SLOT_SIZE;
-            g.fill(sx, sy, sx + SLOT_SIZE, sy + SLOT_SIZE, 0xFF1C1F27);
-            g.fill(sx, sy, sx + SLOT_SIZE, sy + 1, 0xFF0D0F14);
-            g.fill(sx, sy, sx + 1, sy + SLOT_SIZE, 0xFF0D0F14);
-            g.fill(sx, sy + SLOT_SIZE - 1, sx + SLOT_SIZE, sy + SLOT_SIZE, 0xFF2E3342);
-            g.fill(sx + SLOT_SIZE - 1, sy, sx + SLOT_SIZE, sy + SLOT_SIZE, 0xFF2E3342);
+            ItemStack hoveredStack = null;
+            for (SlotRect slot : slotRects) {
+                int sx = slot.x();
+                int sy = slot.y();
+                boolean hover = mouseX >= sx && mouseX < sx + SLOT_SIZE && mouseY >= sy && mouseY < sy + SLOT_SIZE;
+                g.fill(sx, sy, sx + SLOT_SIZE, sy + SLOT_SIZE, 0xFF1C1F27);
+                g.fill(sx, sy, sx + SLOT_SIZE, sy + 1, 0xFF0D0F14);
+                g.fill(sx, sy, sx + 1, sy + SLOT_SIZE, 0xFF0D0F14);
+                g.fill(sx, sy + SLOT_SIZE - 1, sx + SLOT_SIZE, sy + SLOT_SIZE, 0xFF2E3342);
+                g.fill(sx + SLOT_SIZE - 1, sy, sx + SLOT_SIZE, sy + SLOT_SIZE, 0xFF2E3342);
 
-            ItemStack stack = slot.stack();
-            if (stack != null && !stack.isEmpty()) {
-                g.item(stack, sx + 1, sy + 1);
-                g.itemDecorations(this.font, stack, sx + 1, sy + 1);
-                if (nestedShulker == null && ContainerContentReader.isShulkerStack(stack)) {
-                    g.fill(sx + SLOT_SIZE - 4, sy + 1, sx + SLOT_SIZE - 1, sy + 4, 0xFFC864FF);
+                ItemStack stack = slot.stack();
+                if (stack != null && !stack.isEmpty()) {
+                    g.item(stack, sx + 1, sy + 1);
+                    g.itemDecorations(this.font, stack, sx + 1, sy + 1);
+                    if (nestedShulker == null && ContainerContentReader.isShulkerStack(stack)) {
+                        g.fill(sx + SLOT_SIZE - 4, sy + 1, sx + SLOT_SIZE - 1, sy + 4, 0xFFC864FF);
+                    }
+                    if (hover) {
+                        hoveredStack = stack;
+                    }
                 }
                 if (hover) {
-                    hoveredStack = stack;
+                    g.fill(sx + 1, sy + 1, sx + SLOT_SIZE - 1, sy + SLOT_SIZE - 1, 0x40FFFFFF);
                 }
             }
-            if (hover) {
-                g.fill(sx + 1, sy + 1, sx + SLOT_SIZE - 1, sy + SLOT_SIZE - 1, 0x40FFFFFF);
+
+            if (hoveredStack != null) {
+                g.setTooltipForNextFrame(this.font, hoveredStack, mouseX, mouseY);
             }
         }
 
         if (status != null && !status.isEmpty() && System.currentTimeMillis() < statusUntil) {
             g.text(this.font, fit(status, mainW - 16), mainX + 8, panelY + panelH - 40, 0xFF70FF90, true);
-        } else if (nestedShulker == null && hasAnyShulker()) {
+        } else if (nestedShulker == null && entry != null && entry.opened() && hasAnyShulker()) {
             g.text(this.font, fit(Lang.s("viewer.shulker_hint"), mainW - 16), mainX + 8, panelY + panelH - 40, 0xFFC864FF, true);
         }
 
         super.extractRenderState(g, mouseX, mouseY, partialTick);
-
-        if (hoveredStack != null) {
-            g.setTooltipForNextFrame(this.font, hoveredStack, mouseX, mouseY);
-        }
     }
 
     private boolean hasAnyShulker() {
@@ -527,7 +541,8 @@ public class ContainerViewerScreen extends Screen {
             }
         }
 
-        if (event.button() == 0 && nestedShulker == null) {
+        ContainerDatabase.ContainerEntry cur = currentEntry();
+        if (event.button() == 0 && nestedShulker == null && cur != null && cur.opened()) {
             for (SlotRect slot : slotRects) {
                 if (event.x() >= slot.x() && event.x() < slot.x() + SLOT_SIZE
                         && event.y() >= slot.y() && event.y() < slot.y() + SLOT_SIZE) {
