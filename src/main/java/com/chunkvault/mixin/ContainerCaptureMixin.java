@@ -2,6 +2,7 @@ package com.chunkvault.mixin;
 
 import com.chunkvault.Lang;
 import com.chunkvault.save.WorldSaveManager;
+import com.chunkvault.state.ChunkVaultSettings;
 import com.chunkvault.state.LastInteraction;
 import com.chunkvault.state.RecordingState;
 import net.minecraft.client.Minecraft;
@@ -52,7 +53,10 @@ public abstract class ContainerCaptureMixin {
             return;
         }
         chunkvault$checked = true;
-        if (!RecordingState.get().isActive() || !isSupportedMenu(this.menu)) {
+        ChunkVaultSettings settings = ChunkVaultSettings.get();
+        ChunkVaultSettings.ContainerCategory category = categoryOf(this.menu);
+        if (!RecordingState.get().isActive() || category == null
+                || !settings.saveContainers() || !settings.isContainerEnabled(category)) {
             return;
         }
         BlockPos pos = LastInteraction.consumeRecent();
@@ -80,7 +84,10 @@ public abstract class ContainerCaptureMixin {
     private void chunkvault$capture() {
         BlockPos pos = chunkvault$targetPos;
         chunkvault$targetPos = null;
-        if (!RecordingState.get().isActive() || pos == null || !isSupportedMenu(this.menu)) {
+        ChunkVaultSettings settings = ChunkVaultSettings.get();
+        ChunkVaultSettings.ContainerCategory category = categoryOf(this.menu);
+        if (!RecordingState.get().isActive() || pos == null || category == null
+                || !settings.saveContainers() || !settings.isContainerEnabled(category)) {
             return;
         }
 
@@ -153,14 +160,29 @@ public abstract class ContainerCaptureMixin {
         }
     }
 
-    private static boolean isSupportedMenu(AbstractContainerMenu m) {
-        return m instanceof ChestMenu
-                || m instanceof ShulkerBoxMenu
-                || m instanceof HopperMenu
-                || m instanceof DispenserMenu
-                || m instanceof AbstractFurnaceMenu
-                || m instanceof BrewingStandMenu
-                || m instanceof CrafterMenu;
+    private static ChunkVaultSettings.ContainerCategory categoryOf(AbstractContainerMenu m) {
+        if (m instanceof ChestMenu) {
+            return ChunkVaultSettings.ContainerCategory.CHESTS;
+        }
+        if (m instanceof ShulkerBoxMenu) {
+            return ChunkVaultSettings.ContainerCategory.SHULKERS;
+        }
+        if (m instanceof HopperMenu) {
+            return ChunkVaultSettings.ContainerCategory.HOPPERS;
+        }
+        if (m instanceof DispenserMenu) {
+            return ChunkVaultSettings.ContainerCategory.DISPENSERS;
+        }
+        if (m instanceof AbstractFurnaceMenu) {
+            return ChunkVaultSettings.ContainerCategory.FURNACES;
+        }
+        if (m instanceof BrewingStandMenu) {
+            return ChunkVaultSettings.ContainerCategory.BREWING;
+        }
+        if (m instanceof CrafterMenu) {
+            return ChunkVaultSettings.ContainerCategory.CRAFTERS;
+        }
+        return null;
     }
 
     private static Container sourceContainer(AbstractContainerMenu m) {
