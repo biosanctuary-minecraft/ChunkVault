@@ -146,7 +146,7 @@ public class ChunkVaultClient implements ClientModInitializer {
                                                                                 IntegerArgumentType.getInteger(ctx, "x2"),
                                                                                 IntegerArgumentType.getInteger(ctx, "z2"))))))))
                                 .then(literal("radius")
-                                        .then(argument("blocks", IntegerArgumentType.integer(16, 4096))
+                                        .then(argument("blocks", IntegerArgumentType.integer(16, AreaPlan.WORLD_BORDER))
                                                 .executes(ctx -> areaRadius(ctx.getSource(),
                                                         IntegerArgumentType.getInteger(ctx, "blocks")))))
                                 .then(literal("clear").executes(ctx -> areaClear(ctx.getSource())))
