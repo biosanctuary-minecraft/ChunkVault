@@ -4,6 +4,7 @@ import com.chunkvault.state.ChunkVaultSettings;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.IntArrayTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtIo;
 import net.minecraft.nbt.StringTag;
@@ -16,6 +17,7 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.UUID;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
@@ -25,36 +27,72 @@ public final class LevelDatWriter {
 
     private LevelDatWriter() {}
 
-    public static void write(Path worldDir, Path gameDir, String levelName, BlockPos spawnPos, CompoundTag playerTag) {
+    public static void write(Path worldDir, Path gameDir, String levelName, BlockPos spawnPos, UUID uuid) {
         try {
             CompoundTag root = loadTemplateOrFallback(worldDir, gameDir);
 
             CompoundTag data = root.getCompound("Data").orElseGet(CompoundTag::new);
             data.putString("LevelName", levelName);
             if (spawnPos != null) {
-                data.putInt("SpawnX", spawnPos.getX());
-                data.putInt("SpawnY", spawnPos.getY());
-                data.putInt("SpawnZ", spawnPos.getZ());
+                CompoundTag spawn = new CompoundTag();
+                spawn.put("pos", new IntArrayTag(new int[]{spawnPos.getX(), spawnPos.getY(), spawnPos.getZ()}));
+                spawn.putString("dimension", "minecraft:overworld");
+                spawn.putFloat("yaw", 0.0f);
+                spawn.putFloat("pitch", 0.0f);
+                data.put("spawn", spawn);
             }
-            if (playerTag != null) {
-                data.put("Player", playerTag);
+            if (uuid != null) {
+                data.put("singleplayer_uuid", new IntArrayTag(uuidToIntArray(uuid)));
+                data.remove("Player");
             }
-            CompoundTag gameRules = data.getCompound("GameRules").orElseGet(CompoundTag::new);
-            gameRules.putString("doMobSpawning",
-                    ChunkVaultSettings.get().preventMobSpawning() ? "false" : "true");
-            data.put("GameRules", gameRules);
 
             data.putLong("LastPlayed", System.currentTimeMillis());
             root.put("Data", data);
 
-            Path out = worldDir.resolve("level.dat");
-            try (OutputStream fos = Files.newOutputStream(out);
-                 GZIPOutputStream gz = new GZIPOutputStream(fos);
-                 DataOutputStream dos = new DataOutputStream(gz)) {
-                NbtIo.write(root, dos);
-            }
+            writeGzipNbt(worldDir.resolve("level.dat"), root);
+            writeGameRules(worldDir, !ChunkVaultSettings.get().preventMobSpawning());
         } catch (IOException e) {
             System.err.println("[ChunkVault] Failed to write level.dat: " + e);
+        }
+    }
+
+    private static int[] uuidToIntArray(UUID uuid) {
+        long most = uuid.getMostSignificantBits();
+        long least = uuid.getLeastSignificantBits();
+        return new int[]{(int) (most >> 32), (int) most, (int) (least >> 32), (int) least};
+    }
+
+    private static void writeGameRules(Path worldDir, boolean spawnMobs) throws IOException {
+        Path file = worldDir.resolve("data").resolve("minecraft").resolve("game_rules.dat");
+        CompoundTag root;
+        if (Files.isRegularFile(file)) {
+            try {
+                root = readNbt(file);
+            } catch (IOException e) {
+                root = new CompoundTag();
+            }
+        } else {
+            root = new CompoundTag();
+        }
+        root.putInt("DataVersion", SharedConstants.getCurrentVersion().dataVersion().version());
+        CompoundTag data = root.getCompound("data").orElseGet(CompoundTag::new);
+        CompoundTag rules = data.getCompound("rules").orElse(null);
+        if (rules != null) {
+            rules.putBoolean("minecraft:spawn_mobs", spawnMobs);
+            data.put("rules", rules);
+        } else {
+            data.putBoolean("minecraft:spawn_mobs", spawnMobs);
+        }
+        root.put("data", data);
+        Files.createDirectories(file.getParent());
+        writeGzipNbt(file, root);
+    }
+
+    private static void writeGzipNbt(Path file, CompoundTag root) throws IOException {
+        try (OutputStream fos = Files.newOutputStream(file);
+             GZIPOutputStream gz = new GZIPOutputStream(fos);
+             DataOutputStream dos = new DataOutputStream(gz)) {
+            NbtIo.write(root, dos);
         }
     }
 
@@ -184,23 +222,22 @@ public final class LevelDatWriter {
         data.put("Version", versionTag);
 
         data.putInt("GameType", 0);
-        data.putByte("Difficulty", (byte) 2);
-        data.putByte("DifficultyLocked", (byte) 0);
-        data.putBoolean("hardcore", false);
+        CompoundTag difficultySettings = new CompoundTag();
+        difficultySettings.putString("difficulty", "normal");
+        difficultySettings.putBoolean("locked", false);
+        difficultySettings.putBoolean("hardcore", false);
+        data.put("difficulty_settings", difficultySettings);
+
         data.putBoolean("allowCommands", true);
         data.putBoolean("initialized", true);
         data.putLong("Time", 0L);
-        data.putLong("DayTime", 0L);
-        data.putFloat("SpawnAngle", 0f);
-        data.putDouble("BorderCenterX", 0.0);
-        data.putDouble("BorderCenterZ", 0.0);
-        data.putDouble("BorderSize", 60000000.0);
-        data.putDouble("BorderSafeZone", 5.0);
-        data.putDouble("BorderDamagePerBlock", 0.2);
-        data.putDouble("BorderWarningBlocks", 5.0);
-        data.putDouble("BorderWarningTime", 15.0);
 
-        data.put("GameRules", new CompoundTag());
+        CompoundTag spawn = new CompoundTag();
+        spawn.put("pos", new IntArrayTag(new int[]{0, 64, 0}));
+        spawn.putString("dimension", "minecraft:overworld");
+        spawn.putFloat("yaw", 0.0f);
+        spawn.putFloat("pitch", 0.0f);
+        data.put("spawn", spawn);
 
         CompoundTag dataPacks = new CompoundTag();
         ListTag enabled = new ListTag();
@@ -208,12 +245,6 @@ public final class LevelDatWriter {
         dataPacks.put("Enabled", enabled);
         dataPacks.put("Disabled", new ListTag());
         data.put("DataPacks", dataPacks);
-
-        CompoundTag worldGen = new CompoundTag();
-        worldGen.putLong("seed", 0L);
-        worldGen.putBoolean("generate_features", true);
-        worldGen.putBoolean("bonus_chest", false);
-        data.put("WorldGenSettings", worldGen);
 
         CompoundTag root = new CompoundTag();
         root.put("Data", data);
