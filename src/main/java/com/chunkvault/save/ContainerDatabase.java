@@ -435,6 +435,31 @@ public final class ContainerDatabase {
         return base;
     }
 
+    public static int trimToArea(String dimension, int minCx, int maxCx, int minCz, int maxCz) {
+        int removed = 0;
+        Path targetDir;
+        synchronized (INDEX_LOCK) {
+            var it = ENTRIES.entrySet().iterator();
+            while (it.hasNext()) {
+                ContainerEntry e = it.next().getValue();
+                if (e.dimension().equals(dimension)
+                        && (e.chunkX() < minCx || e.chunkX() > maxCx || e.chunkZ() < minCz || e.chunkZ() > maxCz)) {
+                    it.remove();
+                    removed++;
+                }
+            }
+            if (removed > 0) {
+                rebuildIndexesLocked();
+                REVISION.incrementAndGet();
+            }
+            targetDir = activeProjectDir;
+        }
+        if (removed > 0 && targetDir != null) {
+            saveAsync(targetDir);
+        }
+        return removed;
+    }
+
     private static void rebuildIndexesLocked() {
         Map<String, Map<Long, List<ContainerEntry>>> chunks = new HashMap<>();
         Map<String, Map<Long, List<ContainerEntry>>> columns = new HashMap<>();
