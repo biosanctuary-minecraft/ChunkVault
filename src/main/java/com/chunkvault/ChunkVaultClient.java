@@ -71,7 +71,7 @@ public class ChunkVaultClient implements ClientModInitializer {
             AutoRecord.tick();
             ProjectMap.tick();
             while (openMapKey.consumeClick()) {
-                if (client.screen == null) {
+                if (client.player != null) {
                     client.setScreenAndShow(new MapScreen());
                 }
             }
