@@ -7,16 +7,22 @@ import com.chunkvault.gui.SettingsScreen;
 import com.chunkvault.save.PlayerDataWriter;
 import com.chunkvault.save.VoidWorldGenBuilder;
 import com.chunkvault.state.AutoRecord;
+import com.chunkvault.state.LastInteraction;
 import com.chunkvault.state.RecordingState;
+import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.chunk.EmptyLevelChunk;
 import net.minecraft.world.level.chunk.LevelChunk;
@@ -32,15 +38,43 @@ public class ChunkVaultClient implements ClientModInitializer {
 
     public record StopResult(int chunks, int chests, int entities, Path dir) {}
 
+    private static final KeyMapping.Category KEY_CATEGORY =
+            KeyMapping.Category.register(Identifier.fromNamespaceAndPath("chunkvault", "main"));
+
+    private static KeyMapping openMapKey;
     private static volatile boolean openMapNextTick;
     private static volatile boolean openSettingsNextTick;
     private static int tickCounter;
 
     @Override
     public void onInitializeClient() {
+        openMapKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
+                "key.chunkvault.open_map",
+                InputConstants.Type.KEYSYM,
+                InputConstants.KEY_M,
+                KEY_CATEGORY
+        ));
+
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
+            LastInteraction.clear();
+            if (!RecordingState.get().isActive()) {
+                return;
+            }
+            if (client.isSameThread()) {
+                stopRecording();
+            } else {
+                client.execute(ChunkVaultClient::stopRecording);
+            }
+        });
+
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             AutoRecord.tick();
             ProjectMap.tick();
+            while (openMapKey.consumeClick()) {
+                if (client.screen == null) {
+                    client.setScreenAndShow(new MapScreen());
+                }
+            }
             if (openMapNextTick) {
                 openMapNextTick = false;
                 Minecraft.getInstance().setScreenAndShow(new MapScreen());
@@ -98,9 +132,13 @@ public class ChunkVaultClient implements ClientModInitializer {
             return null;
         }
         var manager = RecordingState.get().saveManager();
+        if (manager == null) {
+            return null;
+        }
         var player = Minecraft.getInstance().player;
         var level = Minecraft.getInstance().level;
         if (level != null) {
+            snapshotAlreadyLoadedChunks();
             manager.snapshotEntities(level);
         }
         int chunks = manager.chunksSaved();
@@ -120,6 +158,7 @@ public class ChunkVaultClient implements ClientModInitializer {
                     level.dimension().identifier().toString());
         }
 
+        LastInteraction.clear();
         Path dir = RecordingState.get().stop(spawnPos, uuid, playerTag);
         ProjectMap.save();
         return new StopResult(chunks, chests, entities, dir);
@@ -186,7 +225,6 @@ public class ChunkVaultClient implements ClientModInitializer {
         return 1;
     }
 
-    // ChatScreen closes itself right after command execution, so open screens on the next tick.
     private int map(FabricClientCommandSource source) {
         openMapNextTick = true;
         return 1;
