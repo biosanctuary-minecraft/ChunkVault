@@ -1,6 +1,6 @@
 {
   "key.category.chunkvault.main": "ChunkVault",
-  "key.chunkvault.open_map": "Open Map",
+  "key.chunkvault.open_map": "Open Map (default: C + V)",
   "chunkvault.common.cancel": "Cancel",
   "chunkvault.common.back": "Back",
   "chunkvault.common.done": "Done",
