@@ -51,7 +51,7 @@ public class ChunkVaultClient implements ClientModInitializer {
         openMapKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
                 "key.chunkvault.open_map",
                 InputConstants.Type.KEYSYM,
-                InputConstants.KEY_M,
+                InputConstants.KEY_V,
                 KEY_CATEGORY
         ));
 
@@ -71,7 +71,9 @@ public class ChunkVaultClient implements ClientModInitializer {
             AutoRecord.tick();
             ProjectMap.tick();
             while (openMapKey.consumeClick()) {
-                if (client.player != null) {
+                if (client.player != null
+                        && (!openMapKey.isDefault()
+                        || InputConstants.isKeyDown(client.getWindow(), InputConstants.KEY_C))) {
                     client.setScreenAndShow(new MapScreen());
                 }
             }
