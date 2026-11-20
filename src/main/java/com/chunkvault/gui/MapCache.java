@@ -2,14 +2,16 @@ package com.chunkvault.gui;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
-import net.minecraft.client.renderer.BiomeColors;
 import net.minecraft.core.BlockPos;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.FluidTags;
+import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.EmptyLevelChunk;
 import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.MapColor;
 
@@ -42,6 +44,10 @@ public final class MapCache {
             this.count = count;
         }
     }
+
+    private static final int BIOME_WATER = 0;
+    private static final int BIOME_GRASS = 1;
+    private static final int BIOME_FOLIAGE = 2;
 
     private static final Map<String, Map<Long, ChunkColors>> DIMENSIONS = new ConcurrentHashMap<>();
     private static Object lastConnection;
@@ -101,6 +107,61 @@ public final class MapCache {
         return c instanceof LevelChunk lc && !(c instanceof EmptyLevelChunk) ? lc : null;
     }
 
+    private static Biome biomeAt(LevelChunk chunk, int lx, int y, int lz) {
+        LevelChunkSection[] sections = chunk.getSections();
+        if (sections.length == 0) {
+            return null;
+        }
+        int idx = Math.max(0, Math.min(sections.length - 1, (y >> 4) - chunk.getMinSectionY()));
+        LevelChunkSection sec = sections[idx];
+        if (sec == null) {
+            return null;
+        }
+        return sec.getNoiseBiome((lx & 15) >> 2, (y & 15) >> 2, (lz & 15) >> 2).value();
+    }
+
+    private static int sampleBiomeColor(ClientLevel level, LevelChunk centerChunk,
+                                        int worldX, int y, int worldZ, int mode) {
+        int centerCx = centerChunk.getPos().x();
+        int centerCz = centerChunk.getPos().z();
+        int sumR = 0;
+        int sumG = 0;
+        int sumB = 0;
+        int count = 0;
+
+        for (int dz = -2; dz <= 2; dz += 2) {
+            for (int dx = -2; dx <= 2; dx += 2) {
+                int sx = worldX + dx;
+                int sz = worldZ + dz;
+                int scx = sx >> 4;
+                int scz = sz >> 4;
+                LevelChunk target = (scx == centerCx && scz == centerCz)
+                        ? centerChunk
+                        : loadedChunk(level, scx, scz);
+                if (target == null) {
+                    continue;
+                }
+                Biome biome = biomeAt(target, sx & 15, y, sz & 15);
+                if (biome == null) {
+                    continue;
+                }
+                int rgb = switch (mode) {
+                    case BIOME_WATER -> biome.getWaterColor();
+                    case BIOME_GRASS -> biome.getGrassColor(sx, sz);
+                    default -> biome.getFoliageColor();
+                };
+                sumR += (rgb >> 16) & 0xFF;
+                sumG += (rgb >> 8) & 0xFF;
+                sumB += rgb & 0xFF;
+                count++;
+            }
+        }
+        if (count == 0) {
+            return mode == BIOME_WATER ? 0x3F76E4 : 0x6AA84F;
+        }
+        return ((sumR / count) << 16) | ((sumG / count) << 8) | (sumB / count);
+    }
+
     private static ChunkColors build(ClientLevel level, LevelChunk chunk, boolean hasCeiling) {
         ChunkColors out = new ChunkColors();
         int chunkX = chunk.getPos().x();
@@ -116,25 +177,29 @@ public final class MapCache {
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         BlockPos.MutableBlockPos neighborPos = new BlockPos.MutableBlockPos();
         int[] tops = new int[256];
+        int[] floors = new int[256];
 
         for (int lz = 0; lz < 16; lz++) {
             for (int lx = 0; lx < 16; lx++) {
                 int index = lz * 16 + lx;
                 int top = findSurfaceY(level, chunk, lx, lz, minY, maxY, hasCeiling, pos);
                 tops[index] = top;
+                floors[index] = top;
                 if (top < minY) {
                     continue;
                 }
 
-                pos.set(baseX + lx, top, baseZ + lz);
+                int wx = baseX + lx;
+                int wz = baseZ + lz;
+                pos.set(wx, top, wz);
                 BlockState state = chunk.getBlockState(pos);
 
                 if (state.getFluidState().is(FluidTags.WATER)) {
-                    int waterRgb = BiomeColors.getAverageWaterColor(level, pos);
+                    int waterRgb = sampleBiomeColor(level, chunk, wx, top, wz, BIOME_WATER);
                     int floorY = top - 1;
                     BlockState floorState = state;
                     while (floorY >= minY) {
-                        pos.set(baseX + lx, floorY, baseZ + lz);
+                        pos.set(wx, floorY, wz);
                         BlockState s = chunk.getBlockState(pos);
                         if (!s.getFluidState().is(FluidTags.WATER) && !s.isAir() && !isUnderwaterPlant(s)) {
                             floorState = s;
@@ -142,21 +207,34 @@ public final class MapCache {
                         }
                         floorY--;
                     }
+                    floors[index] = floorY;
                     int depth = Math.max(1, top - floorY);
-                    int floorRgb = floorY >= minY ? blockColor(level, floorState, pos) : 0;
+                    int floorRgb = floorY >= minY ? blockColor(level, chunk, floorState, pos, wx, floorY, wz) : 0;
                     if (floorRgb == 0) {
                         floorRgb = 0x3F4B58;
                     }
-                    double waterMix = Math.min(0.92, 0.28 + (depth - 1) / 14.0);
-                    double depthShade = Math.max(0.56, 1.0 - depth * 0.025);
-                    int r = clamp((int) (lerp((floorRgb >> 16) & 0xFF, (waterRgb >> 16) & 0xFF, waterMix) * depthShade));
-                    int g = clamp((int) (lerp((floorRgb >> 8) & 0xFF, (waterRgb >> 8) & 0xFF, waterMix) * depthShade));
-                    int b = clamp((int) (lerp(floorRgb & 0xFF, waterRgb & 0xFF, waterMix) * depthShade));
+
+                    int northFloor = lz > 0 ? floors[(lz - 1) * 16 + lx] : floorY;
+                    int westFloor = lx > 0 ? floors[index - 1] : floorY;
+                    int floorRelief = (floorY - northFloor) * 2 + (floorY - westFloor);
+                    double floorShade = 0.94 + Math.tanh(floorRelief * 0.22) * 0.18;
+
+                    double fr = ((floorRgb >> 16) & 0xFF) * floorShade;
+                    double fg = ((floorRgb >> 8) & 0xFF) * floorShade;
+                    double fb = (floorRgb & 0xFF) * floorShade;
+
+                    double visibility = Math.exp(-depth * 0.145);
+                    double waterMix = 1.0 - visibility;
+                    double depthShade = Math.max(0.54, 1.0 - depth * 0.022);
+
+                    int r = clamp((int) (lerp(fr, (waterRgb >> 16) & 0xFF, waterMix) * depthShade));
+                    int g = clamp((int) (lerp(fg, (waterRgb >> 8) & 0xFF, waterMix) * depthShade));
+                    int b = clamp((int) (lerp(fb, waterRgb & 0xFF, waterMix) * depthShade));
                     out.px[index] = 0xFF000000 | (r << 16) | (g << 8) | b;
                     continue;
                 }
 
-                int rgb = blockColor(level, state, pos);
+                int rgb = blockColor(level, chunk, state, pos, wx, top, wz);
                 if (rgb == 0) {
                     continue;
                 }
@@ -180,7 +258,13 @@ public final class MapCache {
                 }
 
                 int relief = (top - northTop) * 2 + (top - westTop);
-                double shade = 0.92 + Math.tanh(relief * 0.22) * 0.22;
+                double shade = 0.94 + Math.tanh(relief * 0.28) * 0.26;
+                double alt = Math.max(-0.08, Math.min(0.10, (top - 64) * 0.0014));
+                shade += alt;
+                if (northTop - top >= 3 || westTop - top >= 3) {
+                    shade *= 0.86;
+                }
+
                 int r = clamp((int) (((rgb >> 16) & 0xFF) * shade));
                 int g = clamp((int) (((rgb >> 8) & 0xFF) * shade));
                 int b = clamp((int) ((rgb & 0xFF) * shade));
@@ -244,28 +328,99 @@ public final class MapCache {
                 || state.is(Blocks.KELP_PLANT);
     }
 
-    private static int blockColor(ClientLevel level, BlockState state, BlockPos pos) {
-        if (state.is(Blocks.GRASS_BLOCK) || state.is(Blocks.SHORT_GRASS) || state.is(Blocks.TALL_GRASS)
-                || state.is(Blocks.FERN) || state.is(Blocks.LARGE_FERN) || state.is(Blocks.SUGAR_CANE)) {
-            return BiomeColors.getAverageGrassColor(level, pos) & 0xFFFFFF;
+    private static int blockColor(ClientLevel level, LevelChunk chunk, BlockState state,
+                                  BlockPos pos, int wx, int y, int wz) {
+        Block b = state.getBlock();
+        if (b == Blocks.GRASS_BLOCK || b == Blocks.SHORT_GRASS || b == Blocks.TALL_GRASS
+                || b == Blocks.FERN || b == Blocks.LARGE_FERN || b == Blocks.SUGAR_CANE) {
+            return sampleBiomeColor(level, chunk, wx, y, wz, BIOME_GRASS);
         }
         if (state.is(BlockTags.LEAVES)) {
-            if (state.is(Blocks.CHERRY_LEAVES) || state.is(Blocks.PALE_OAK_LEAVES)) {
-                return scaleRgb(state.getMapColor(level, pos).col, 0.9);
+            if (b == Blocks.CHERRY_LEAVES) {
+                return 0xE5A5BE;
             }
-            int leafRgb;
-            if (state.is(Blocks.SPRUCE_LEAVES)) {
-                leafRgb = 0x619961;
-            } else if (state.is(Blocks.BIRCH_LEAVES)) {
-                leafRgb = 0x80A755;
-            } else {
-                leafRgb = BiomeColors.getAverageFoliageColor(level, pos) & 0xFFFFFF;
+            if (b == Blocks.PALE_OAK_LEAVES) {
+                return 0x767E73;
             }
-            return scaleRgb(leafRgb, 0.85);
+            if (b == Blocks.SPRUCE_LEAVES) {
+                return 0x436E43;
+            }
+            if (b == Blocks.BIRCH_LEAVES) {
+                return 0x6E9444;
+            }
+            return scaleRgb(sampleBiomeColor(level, chunk, wx, y, wz, BIOME_FOLIAGE), 0.80);
         }
-        if (state.is(Blocks.VINE)) {
-            return scaleRgb(BiomeColors.getAverageFoliageColor(level, pos) & 0xFFFFFF, 0.85);
+        if (b == Blocks.VINE) {
+            return scaleRgb(sampleBiomeColor(level, chunk, wx, y, wz, BIOME_FOLIAGE), 0.80);
         }
+        if (b == Blocks.PODZOL) return 0x6D4F2E;
+        if (b == Blocks.DIRT) return 0x866043;
+        if (b == Blocks.COARSE_DIRT) return 0x76543A;
+        if (b == Blocks.ROOTED_DIRT) return 0x8A6548;
+        if (b == Blocks.DIRT_PATH) return 0x9B8249;
+        if (b == Blocks.FARMLAND) return 0x633E22;
+        if (b == Blocks.MUD) return 0x3C383B;
+        if (b == Blocks.CLAY) return 0x9EA5B2;
+        if (b == Blocks.MYCELIUM) return 0x6E6265;
+        if (b == Blocks.MOSS_BLOCK) return 0x5A6E2D;
+        if (b == Blocks.STONE) return 0x7E7E7E;
+        if (b == Blocks.COBBLESTONE) return 0x6F6F6F;
+        if (b == Blocks.MOSSY_COBBLESTONE) return 0x64725A;
+        if (b == Blocks.ANDESITE) return 0x888888;
+        if (b == Blocks.GRANITE) return 0x956755;
+        if (b == Blocks.DIORITE) return 0xC6C6C6;
+        if (b == Blocks.GRAVEL) return 0x857F7F;
+        if (b == Blocks.DEEPSLATE) return 0x505052;
+        if (b == Blocks.COBBLED_DEEPSLATE) return 0x4C4C50;
+        if (b == Blocks.TUFF) return 0x6C6D66;
+        if (b == Blocks.CALCITE) return 0xE0E0DC;
+        if (b == Blocks.DRIPSTONE_BLOCK) return 0x866B5C;
+        if (b == Blocks.SAND) return 0xDCD3A1;
+        if (b == Blocks.RED_SAND) return 0xBF6721;
+        if (b == Blocks.SANDSTONE) return 0xD8CB9A;
+        if (b == Blocks.RED_SANDSTONE) return 0xB66220;
+        if (b == Blocks.SNOW || b == Blocks.SNOW_BLOCK || b == Blocks.POWDER_SNOW) return 0xF2FBF9;
+        if (b == Blocks.ICE) return 0x91B7FD;
+        if (b == Blocks.PACKED_ICE) return 0x8DB4FA;
+        if (b == Blocks.BLUE_ICE) return 0x74A7FD;
+        if (b == Blocks.OAK_LOG) return 0x6D5533;
+        if (b == Blocks.SPRUCE_LOG) return 0x3B2611;
+        if (b == Blocks.BIRCH_LOG) return 0xD8D6D1;
+        if (b == Blocks.JUNGLE_LOG) return 0x554319;
+        if (b == Blocks.ACACIA_LOG) return 0x676056;
+        if (b == Blocks.DARK_OAK_LOG) return 0x3C2E1B;
+        if (b == Blocks.MANGROVE_LOG) return 0x544329;
+        if (b == Blocks.CHERRY_LOG) return 0x37222B;
+        if (b == Blocks.OAK_PLANKS) return 0xA2824E;
+        if (b == Blocks.SPRUCE_PLANKS) return 0x725430;
+        if (b == Blocks.BIRCH_PLANKS) return 0xC0AF79;
+        if (b == Blocks.JUNGLE_PLANKS) return 0xA07350;
+        if (b == Blocks.ACACIA_PLANKS) return 0xA85A32;
+        if (b == Blocks.DARK_OAK_PLANKS) return 0x422B14;
+        if (b == Blocks.MANGROVE_PLANKS) return 0x753630;
+        if (b == Blocks.CHERRY_PLANKS) return 0xE2B2AC;
+        if (b == Blocks.WHEAT) return 0xA8B038;
+        if (b == Blocks.CARROTS) return 0x4A8C2A;
+        if (b == Blocks.POTATOES) return 0x4E942E;
+        if (b == Blocks.BEETROOTS) return 0x568C32;
+        if (b == Blocks.HAY_BLOCK) return 0xB89828;
+        if (b == Blocks.PUMPKIN) return 0xC87418;
+        if (b == Blocks.MELON) return 0x769422;
+        if (b == Blocks.CACTUS) return 0x56822A;
+        if (b == Blocks.LILY_PAD) return 0x3D6E2A;
+        if (b == Blocks.NETHERRACK) return 0x632727;
+        if (b == Blocks.CRIMSON_NYLIUM) return 0x832020;
+        if (b == Blocks.WARPED_NYLIUM) return 0x2B7265;
+        if (b == Blocks.SOUL_SAND) return 0x513E32;
+        if (b == Blocks.SOUL_SOIL) return 0x4B392E;
+        if (b == Blocks.BASALT) return 0x49484D;
+        if (b == Blocks.BLACKSTONE) return 0x2A242B;
+        if (b == Blocks.MAGMA_BLOCK) return 0x8E3F1F;
+        if (b == Blocks.GLOWSTONE) return 0xC99E57;
+        if (b == Blocks.END_STONE) return 0xDBDE9E;
+        if (b == Blocks.OBSIDIAN) return 0x14121D;
+        if (b == Blocks.LAVA) return 0xD85E14;
+
         return state.getMapColor(level, pos).col;
     }
 
