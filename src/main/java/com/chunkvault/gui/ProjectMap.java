@@ -1,5 +1,6 @@
 package com.chunkvault.gui;
 
+import com.chunkvault.save.ContainerDatabase;
 import net.fabricmc.loader.api.FabricLoader;
 
 import java.io.BufferedInputStream;
@@ -20,7 +21,7 @@ import java.util.zip.GZIPOutputStream;
 
 public final class ProjectMap {
 
-    private static final int MAGIC = 0x43564D31; // CVM1
+    private static final int MAGIC = 0x43564D31;
 
     private static volatile String name;
     private static final Map<String, Map<Long, MapCache.ChunkColors>> CHUNKS = new ConcurrentHashMap<>();
@@ -87,7 +88,9 @@ public final class ProjectMap {
             session++;
             name = folder;
             storeDirty = false;
-            load(root().resolve(folder).resolve("chunkvault_map"));
+            Path projectDir = root().resolve(folder);
+            load(projectDir.resolve("chunkvault_map"));
+            ContainerDatabase.loadForProject(projectDir);
         }
     }
 
@@ -105,6 +108,7 @@ public final class ProjectMap {
             CHUNKS.clear();
             DIRTY.clear();
             REGION_KEYS.clear();
+            ContainerDatabase.clear();
             session++;
             name = null;
         }
@@ -164,7 +168,7 @@ public final class ProjectMap {
 
     private static void write(Path file, String dimensionId, Map<Long, MapCache.ChunkColors> map) throws IOException {
         Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
-        ArrayList<Map.Entry<Long, MapCache.ChunkColors>> entries = new ArrayList<>(map.entrySet());
+        ArrayList> entries = new ArrayList<>(map.entrySet());
         try (DataOutputStream out = new DataOutputStream(
                 new BufferedOutputStream(new GZIPOutputStream(Files.newOutputStream(tmp))))) {
             out.writeInt(MAGIC);
