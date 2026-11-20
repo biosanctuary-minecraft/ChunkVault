@@ -78,10 +78,19 @@ public class MapScreen extends Screen {
     private int pinBtnX1;
     private int pinBtnY1;
 
+    private int dimBtnX0;
+    private int dimBtnY0;
+    private int dimBtnX1;
+    private int dimBtnY1;
+
     private int areaBarY0;
     private int areaBarY1;
     private int abRedrawX0;
     private int abRedrawX1;
+    private int abClipX0;
+    private int abClipX1;
+    private int abTrimX0;
+    private int abTrimX1;
     private int abHudX0;
     private int abHudX1;
     private int abAutoX0;
@@ -89,12 +98,14 @@ public class MapScreen extends Screen {
     private int abClearX0;
     private int abClearX1;
 
+    private boolean areaPanelOpen;
     private boolean selectingArea;
     private boolean draggingArea;
     private int areaStartCx;
     private int areaStartCz;
     private int areaEndCx;
     private int areaEndCz;
+    private long trimConfirmUntil;
 
     private boolean draggingMap;
     private boolean dragged;
@@ -185,17 +196,32 @@ public class MapScreen extends Screen {
         String dimensionId = level.dimension().identifier().toString();
         var cache = ProjectMap.forDimension(dimensionId);
         boolean hasProject = ProjectMap.isOpen();
-        boolean showAreaBar = hasProject && (selectingArea || AreaPlan.isActive());
+        boolean showAreaBar = hasProject && (selectingArea || (areaPanelOpen && AreaPlan.isActive()));
+        boolean showDimBtn = hasProject && areaPanelOpen && AreaPlan.isActive();
 
         pinBtnX1 = hasProject ? this.width - 8 : 0;
         pinBtnX0 = hasProject ? pinBtnX1 - 22 : 0;
         pinBtnY1 = hasProject ? this.height - BOTTOM_BAR - 8 : 0;
         pinBtnY0 = hasProject ? pinBtnY1 - 22 : 0;
 
+        if (showDimBtn) {
+            dimBtnX0 = pinBtnX0;
+            dimBtnX1 = pinBtnX1;
+            dimBtnY1 = pinBtnY0 - 6;
+            dimBtnY0 = dimBtnY1 - 22;
+        } else {
+            dimBtnX0 = 0;
+            dimBtnX1 = 0;
+            dimBtnY0 = 0;
+            dimBtnY1 = 0;
+        }
+
         boolean overPinBtn = hasProject && mouseX >= pinBtnX0 && mouseX < pinBtnX1
                 && mouseY >= pinBtnY0 && mouseY < pinBtnY1;
+        boolean overDimBtn = showDimBtn && mouseX >= dimBtnX0 && mouseX < dimBtnX1
+                && mouseY >= dimBtnY0 && mouseY < dimBtnY1;
         boolean inAreaBar = showAreaBar && mouseY >= areaBarY0 && mouseY < areaBarY1;
-        boolean inMap = mouseY >= mapY0 && mouseY < mapY1 && !inAreaBar && !overPinBtn;
+        boolean inMap = mouseY >= mapY0 && mouseY < mapY1 && !inAreaBar && !overPinBtn && !overDimBtn;
 
         dev = Math.max(1.0, (double) mc.getWindow().getWidth() / (double) this.width);
         clipX0 = (int) Math.round(mapX0 * dev);
@@ -406,6 +432,9 @@ public class MapScreen extends Screen {
 
         g.disableScissor();
 
+        if (showDimBtn) {
+            drawDimToggleIcon(g, overDimBtn);
+        }
         if (hasProject) {
             drawPinToggleIcon(g, overPinBtn);
         }
@@ -443,7 +472,7 @@ public class MapScreen extends Screen {
             g.fill(dbX0 + 1, btnY0 + 1, dbX1 - 1, btnY1 - 1, hoverDbBtn ? 0xFF9E7022 : 0xFF7A5618);
             g.item(chestButtonIcon(), dbX0 + 3, btnY0);
             areaX0 = dbX1 + 5;
-            boolean areaHighlighted = selectingArea || AreaPlan.isActive();
+            boolean areaHighlighted = areaPanelOpen || selectingArea || AreaPlan.isActive();
             areaX1 = drawTopButton(g, areaX0, Lang.s("button.area"),
                     areaHighlighted ? 0xFF1F7A8C : 0xFF3A4B5C, areaHighlighted ? 0xFF2A9BB0 : 0xFF4E647A, mouseX, mouseY);
             endX = areaX1;
@@ -480,7 +509,7 @@ public class MapScreen extends Screen {
         }
 
         if (showAreaBar) {
-            drawAreaBar(g, player, mouseX, mouseY);
+            drawAreaBar(g, player, mouseX, mouseY, now);
         } else {
             areaBarY0 = 0;
             areaBarY1 = 0;
@@ -512,6 +541,10 @@ public class MapScreen extends Screen {
 
         if (hoverDbBtn) {
             drawSimpleTooltip(g, List.of(Lang.s("db.title_short")), List.of(0xFFFFFFFF), mouseX, mouseY);
+        } else if (overDimBtn) {
+            String tip = Lang.s("map.dim_toggle_tip",
+                    AreaPlan.isDimOutside() ? Lang.s("common.on") : Lang.s("common.off"));
+            drawSimpleTooltip(g, List.of(tip), List.of(0xFFFFFFFF), mouseX, mouseY);
         } else if (overPinBtn) {
             String l1 = Lang.s("map.pins_toggle_tip", showPins ? Lang.s("common.on") : Lang.s("common.off"));
             String l2 = Lang.s("map.pins_unopened_tip",
@@ -519,6 +552,34 @@ public class MapScreen extends Screen {
             drawSimpleTooltip(g, List.of(l1, l2), List.of(0xFFFFFFFF, 0xFF9AA0B0), mouseX, mouseY);
         } else if (hoveredPin != null) {
             drawPinTooltip(g, hoveredPin, mouseX, mouseY);
+        }
+    }
+
+    private void drawDimToggleIcon(GuiGraphicsExtractor g, boolean hover) {
+        int border = hover ? 0xFFFFFFFF : 0xFF3A3A48;
+        int bg = hover ? 0xF0262A34 : 0xE014161C;
+        g.fill(dimBtnX0 - 1, dimBtnY0 - 1, dimBtnX1 + 1, dimBtnY1 + 1, border);
+        g.fill(dimBtnX0, dimBtnY0, dimBtnX1, dimBtnY1, bg);
+
+        int cx = (dimBtnX0 + dimBtnX1) / 2;
+        int cy = (dimBtnY0 + dimBtnY1) / 2;
+        boolean on = AreaPlan.isDimOutside();
+        int col = on ? 0xFFFFFFFF : 0xFF6E7382;
+
+        g.fill(cx - 6, cy - 6, cx - 2, cy - 5, col);
+        g.fill(cx - 6, cy - 6, cx - 5, cy - 2, col);
+        g.fill(cx + 2, cy - 6, cx + 6, cy - 5, col);
+        g.fill(cx + 5, cy - 6, cx + 6, cy - 2, col);
+        g.fill(cx - 6, cy + 5, cx - 2, cy + 6, col);
+        g.fill(cx - 6, cy + 2, cx - 5, cy + 6, col);
+        g.fill(cx + 2, cy + 5, cx + 6, cy + 6, col);
+        g.fill(cx + 5, cy + 2, cx + 6, cy + 6, col);
+
+        g.fill(cx - 3, cy - 3, cx + 3, cy + 3, on ? 0xFFFFFFFF : 0xFF555B6A);
+        if (!on) {
+            for (int i = -6; i <= 6; i++) {
+                g.fill(cx + i, cy + i, cx + i + 2, cy + i + 1, 0xFFFF7070);
+            }
         }
     }
 
@@ -577,6 +638,23 @@ public class MapScreen extends Screen {
         int aMinZ = AreaPlan.minCz();
         int aMaxZ = AreaPlan.maxCz();
 
+        int bx0 = (int) Math.round((mapCX + (aMinX * 16.0 - centerX) * scale) * dev);
+        int bx1 = (int) Math.round((mapCX + ((aMaxX + 1) * 16.0 - centerX) * scale) * dev);
+        int by0 = (int) Math.round((mapCY + (aMinZ * 16.0 - centerZ) * scale) * dev);
+        int by1 = (int) Math.round((mapCY + ((aMaxZ + 1) * 16.0 - centerZ) * scale) * dev);
+
+        if (AreaPlan.isDimOutside()) {
+            int dimColor = 0x9A080A0F;
+            fillI(g, clipX0, clipY0, clipX1, by0, dimColor);
+            fillI(g, clipX0, by1, clipX1, clipY1, dimColor);
+            int midY0 = Math.max(clipY0, by0);
+            int midY1 = Math.min(clipY1, by1);
+            if (midY1 > midY0) {
+                fillI(g, clipX0, midY0, bx0, midY1, dimColor);
+                fillI(g, bx1, midY0, clipX1, midY1, dimColor);
+            }
+        }
+
         int vMinX = Math.max(aMinX, minCx);
         int vMaxX = Math.min(aMaxX, maxCx);
         int vMinZ = Math.max(aMinZ, minCz);
@@ -599,10 +677,6 @@ public class MapScreen extends Screen {
             }
         }
 
-        int bx0 = (int) Math.round((mapCX + (aMinX * 16.0 - centerX) * scale) * dev);
-        int bx1 = (int) Math.round((mapCX + ((aMaxX + 1) * 16.0 - centerX) * scale) * dev);
-        int by0 = (int) Math.round((mapCY + (aMinZ * 16.0 - centerZ) * scale) * dev);
-        int by1 = (int) Math.round((mapCY + ((aMaxZ + 1) * 16.0 - centerZ) * scale) * dev);
         int t = Math.max(2, (int) Math.round(dev));
         fillI(g, bx0, by0, bx1, by0 + t, 0xEE38D8FF);
         fillI(g, bx0, by1 - t, bx1, by1, 0xEE38D8FF);
@@ -623,7 +697,7 @@ public class MapScreen extends Screen {
         }
     }
 
-    private void drawAreaBar(GuiGraphicsExtractor g, LocalPlayer player, int mouseX, int mouseY) {
+    private void drawAreaBar(GuiGraphicsExtractor g, LocalPlayer player, int mouseX, int mouseY, long now) {
         areaBarY0 = TOP_BAR;
         areaBarY1 = TOP_BAR + 20;
         g.fill(0, areaBarY0, this.width, areaBarY1, 0xE814161C);
@@ -631,6 +705,10 @@ public class MapScreen extends Screen {
 
         abRedrawX0 = 0;
         abRedrawX1 = 0;
+        abClipX0 = 0;
+        abClipX1 = 0;
+        abTrimX0 = 0;
+        abTrimX1 = 0;
         abHudX0 = 0;
         abHudX1 = 0;
         abAutoX0 = 0;
@@ -648,12 +726,6 @@ public class MapScreen extends Screen {
                     0xFF5A2A2A, 0xFF7A3838, mouseX, mouseY);
             return;
         }
-
-        AreaPlan.Progress prog = AreaPlan.computeProgress(player.blockPosition().getX() >> 4, player.blockPosition().getZ() >> 4);
-        String pct = String.format(Locale.ROOT, "%.1f%%", prog.percent());
-        String summary = Lang.s("area.bar_summary", prog.recorded(), prog.total(), pct, prog.remaining());
-        int summaryColor = prog.remaining() == 0 && prog.total() > 0 ? 0xFF70FF90 : 0xFFFFFFFF;
-        g.text(this.font, summary, 8, cy, summaryColor, true);
 
         int by0 = areaBarY0 + 2;
         int by1 = areaBarY1 - 3;
@@ -681,10 +753,39 @@ public class MapScreen extends Screen {
                 AreaPlan.isHudVisible() ? 0xFF2B8AA0 : 0xFF363C4A, mouseX, mouseY);
         rx = abHudX0 - 4;
 
+        boolean confirmingTrim = trimConfirmUntil > now;
+        String trimTxt = confirmingTrim ? Lang.s("area.btn_trim_confirm") : Lang.s("area.btn_trim");
+        abTrimX1 = rx;
+        abTrimX0 = abTrimX1 - this.font.width(trimTxt) - 10;
+        drawMiniButton(g, abTrimX0, abTrimX1, by0, by1, trimTxt,
+                confirmingTrim ? 0xFFA82C2C : 0xFF6B4A1E,
+                confirmingTrim ? 0xFFD03838 : 0xFF8C6228, mouseX, mouseY);
+        rx = abTrimX0 - 4;
+
+        String clipTxt = Lang.s("area.btn_clip", AreaPlan.isClipToArea() ? Lang.s("common.on") : Lang.s("common.off"));
+        abClipX1 = rx;
+        abClipX0 = abClipX1 - this.font.width(clipTxt) - 10;
+        drawMiniButton(g, abClipX0, abClipX1, by0, by1, clipTxt,
+                AreaPlan.isClipToArea() ? 0xFF8A6A1A : 0xFF262A34,
+                AreaPlan.isClipToArea() ? 0xFFB08924 : 0xFF363C4A, mouseX, mouseY);
+        rx = abClipX0 - 4;
+
         String redrawTxt = Lang.s("area.btn_redraw");
         abRedrawX1 = rx;
         abRedrawX0 = abRedrawX1 - this.font.width(redrawTxt) - 10;
         drawMiniButton(g, abRedrawX0, abRedrawX1, by0, by1, redrawTxt, 0xFF2E384D, 0xFF42516E, mouseX, mouseY);
+
+        AreaPlan.Progress prog = AreaPlan.computeProgress(player.blockPosition().getX() >> 4, player.blockPosition().getZ() >> 4);
+        String pct = String.format(Locale.ROOT, "%.1f%%", prog.percent());
+        String summary = Lang.s("area.bar_summary", prog.recorded(), prog.total(), pct, prog.remaining());
+        int maxSummaryW = abRedrawX0 - 14;
+        if (this.font.width(summary) > maxSummaryW) {
+            summary = prog.recorded() + "/" + prog.total() + " (" + pct + ")";
+        }
+        int summaryColor = prog.remaining() == 0 && prog.total() > 0 ? 0xFF70FF90 : 0xFFFFFFFF;
+        if (maxSummaryW > 30) {
+            g.text(this.font, summary, 8, cy, summaryColor, true);
+        }
     }
 
     private void drawMiniButton(GuiGraphicsExtractor g, int x0, int x1, int y0, int y1,
@@ -985,6 +1086,13 @@ public class MapScreen extends Screen {
         double mx = event.x();
         double my = event.y();
 
+        if (dimBtnX1 > dimBtnX0 && mx >= dimBtnX0 && mx < dimBtnX1 && my >= dimBtnY0 && my < dimBtnY1) {
+            if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+                AreaPlan.toggleDimOutside();
+                return true;
+            }
+        }
+
         if (pinBtnX1 > pinBtnX0 && mx >= pinBtnX0 && mx < pinBtnX1 && my >= pinBtnY0 && my < pinBtnY1) {
             if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
                 showPins = !showPins;
@@ -1021,8 +1129,18 @@ public class MapScreen extends Screen {
                 return true;
             }
             if (areaX1 > areaX0 && mx >= areaX0 && mx < areaX1) {
-                selectingArea = !selectingArea;
-                draggingArea = false;
+                trimConfirmUntil = 0;
+                if (!AreaPlan.isActive()) {
+                    selectingArea = !selectingArea;
+                    areaPanelOpen = selectingArea;
+                    draggingArea = false;
+                } else {
+                    areaPanelOpen = !areaPanelOpen;
+                    if (!areaPanelOpen) {
+                        selectingArea = false;
+                        draggingArea = false;
+                    }
+                }
                 return true;
             }
             if (mx >= setX0 && mx < setX1) {
@@ -1037,34 +1155,71 @@ public class MapScreen extends Screen {
                 if (mx >= abClearX0 && mx < abClearX1) {
                     selectingArea = false;
                     draggingArea = false;
+                    if (!AreaPlan.isActive()) {
+                        areaPanelOpen = false;
+                    }
                 }
                 return true;
             }
             if (mx >= abRedrawX0 && mx < abRedrawX1) {
+                trimConfirmUntil = 0;
                 selectingArea = true;
                 draggingArea = false;
                 return true;
             }
+            if (mx >= abClipX0 && mx < abClipX1) {
+                trimConfirmUntil = 0;
+                AreaPlan.toggleClipToArea();
+                return true;
+            }
+            if (mx >= abTrimX0 && mx < abTrimX1) {
+                if (recordingBlocks()) {
+                    trimConfirmUntil = 0;
+                    return true;
+                }
+                long now = System.currentTimeMillis();
+                if (trimConfirmUntil > now) {
+                    trimConfirmUntil = 0;
+                    var res = AreaPlan.trimProjectToArea();
+                    if (res.removedChunks() == 0 && res.removedContainers() == 0) {
+                        showToast(Lang.s("area.trim_empty"));
+                    } else {
+                        showToast(Lang.s("area.trimmed", res.removedChunks(), res.removedContainers()));
+                    }
+                } else {
+                    trimConfirmUntil = now + 4000;
+                }
+                return true;
+            }
             if (mx >= abHudX0 && mx < abHudX1) {
+                trimConfirmUntil = 0;
                 AreaPlan.toggleHud();
                 return true;
             }
             if (mx >= abAutoX0 && mx < abAutoX1) {
+                trimConfirmUntil = 0;
                 AreaPlan.toggleAutoStop();
                 return true;
             }
             if (mx >= abClearX0 && mx < abClearX1) {
+                trimConfirmUntil = 0;
                 AreaPlan.clearPlan();
+                areaPanelOpen = false;
                 showToast(Lang.s("area.cleared"));
                 return true;
             }
             return true;
         }
 
+        trimConfirmUntil = 0;
+
         if (event.button() == InputConstants.MOUSE_BUTTON_RIGHT) {
             if (selectingArea) {
                 selectingArea = false;
                 draggingArea = false;
+                if (!AreaPlan.isActive()) {
+                    areaPanelOpen = false;
+                }
             } else {
                 recenterOnPlayer();
             }
@@ -1160,6 +1315,7 @@ public class MapScreen extends Screen {
             if (level != null && ProjectMap.isOpen()) {
                 String dim = level.dimension().identifier().toString();
                 AreaPlan.setFromChunks(dim, areaStartCx, areaStartCz, areaEndCx, areaEndCz);
+                areaPanelOpen = true;
                 showToast(Lang.s("area.set_toast", AreaPlan.totalChunks()));
             }
             return true;
@@ -1203,6 +1359,9 @@ public class MapScreen extends Screen {
         if (selectingArea) {
             selectingArea = false;
             draggingArea = false;
+            if (!AreaPlan.isActive()) {
+                areaPanelOpen = false;
+            }
             return;
         }
         super.onClose();
