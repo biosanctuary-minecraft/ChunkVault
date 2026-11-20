@@ -54,6 +54,34 @@ public final class SimpleRegionFile implements AutoCloseable {
         }
     }
 
+    public synchronized boolean deleteChunk(int localX, int localZ) throws IOException {
+        int index = localZ * 32 + localX;
+        int oldPacked = offsets[index];
+        if (oldPacked == 0) {
+            return false;
+        }
+        int oldOffset = oldPacked >>> 8;
+        int oldCount = oldPacked & 0xFF;
+        if (oldOffset >= HEADER_SECTORS && oldCount > 0) {
+            usedSectors.clear(oldOffset, oldOffset + oldCount);
+        }
+        offsets[index] = 0;
+        raf.seek((long) index * 4);
+        raf.writeInt(0);
+        raf.seek(SECTOR_BYTES + (long) index * 4);
+        raf.writeInt(0);
+        return true;
+    }
+
+    public synchronized boolean hasAnyChunks() {
+        for (int offset : offsets) {
+            if (offset != 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public synchronized void writeChunk(int localX, int localZ, byte[] uncompressedNbt) throws IOException {
         ByteArrayOutputStream compressed = new ByteArrayOutputStream();
         Deflater deflater = new Deflater(Deflater.BEST_SPEED);
