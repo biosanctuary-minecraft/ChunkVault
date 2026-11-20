@@ -92,9 +92,6 @@ public class ExplorerScreen extends Screen {
         super.init();
         draggingScrollbar = false;
         scanFolders();
-        if (selected >= entries.size()) {
-            selected = -1;
-        }
         int x = (this.width - W) / 2;
         listBottom = Math.max(LIST_TOP + ROW_H * 3, this.height - 140);
         scroll = Math.max(0, Math.min(scroll, maxScroll()));
@@ -199,12 +196,22 @@ public class ExplorerScreen extends Screen {
         t.start();
     }
 
+    private static boolean isInternalFile(String fileName) {
+        return fileName.equals("chunkvault_containers.dat")
+                || fileName.equals("chunkvault_area.properties")
+                || fileName.startsWith("chunkvault_")
+                || fileName.endsWith(".tmp");
+    }
+
     private static void copyTree(Path src, Path dst) throws IOException {
         Files.walkFileTree(src, new SimpleFileVisitor<>() {
             @Override
             public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
-                if (!dir.equals(src) && "chunkvault_map".equals(dir.getFileName().toString())) {
-                    return FileVisitResult.SKIP_SUBTREE;
+                if (!dir.equals(src)) {
+                    String name = dir.getFileName().toString();
+                    if (name.equals("chunkvault_map") || name.startsWith("chunkvault_")) {
+                        return FileVisitResult.SKIP_SUBTREE;
+                    }
                 }
                 Files.createDirectories(dst.resolve(src.relativize(dir).toString()));
                 return FileVisitResult.CONTINUE;
@@ -212,7 +219,7 @@ public class ExplorerScreen extends Screen {
 
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                if ("chunkvault_containers.dat".equals(file.getFileName().toString())) {
+                if (isInternalFile(file.getFileName().toString())) {
                     return FileVisitResult.CONTINUE;
                 }
                 Files.copy(file, dst.resolve(src.relativize(file).toString()), StandardCopyOption.REPLACE_EXISTING);
