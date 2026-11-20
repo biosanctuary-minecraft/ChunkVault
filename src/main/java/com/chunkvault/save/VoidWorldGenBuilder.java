@@ -21,8 +21,6 @@ import net.minecraft.world.level.dimension.LevelStem;
 import net.minecraft.world.level.levelgen.FlatLevelSource;
 import net.minecraft.world.level.levelgen.WorldDimensions;
 import net.minecraft.world.level.levelgen.flat.FlatLevelGeneratorSettings;
-import net.minecraft.world.level.levelgen.presets.WorldPreset;
-import net.minecraft.world.level.levelgen.presets.WorldPresets;
 
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -42,21 +40,58 @@ public final class VoidWorldGenBuilder {
     public static CompoundTag build(ClientLevel level) {
         ChunkVaultSettings settings = ChunkVaultSettings.get();
         if (settings.useSeed()) {
-            try {
-                return buildSeeded(level, settings.seed());
-            } catch (Throwable e) {
-                System.err.println("[ChunkVault] Seeded world-gen build failed, falling back to void: " + e);
-            }
+            return buildSeeded(settings.seed());
         }
         return buildVoid(level, 0L);
     }
 
-    private static CompoundTag buildSeeded(ClientLevel level, long seed) {
-        HolderLookup.Provider registries = level.registryAccess();
-        HolderLookup.RegistryLookup<WorldPreset> presets = registries.lookupOrThrow(Registries.WORLD_PRESET);
-        Holder<WorldPreset> normal = presets.getOrThrow(WorldPresets.NORMAL);
-        WorldDimensions dimensions = normal.value().createWorldDimensions();
-        return encode(registries, dimensions, seed, true);
+    private static CompoundTag buildSeeded(long seed) {
+        CompoundTag dimensions = new CompoundTag();
+        dimensions.put("minecraft:overworld", noiseDimension("minecraft:overworld", "minecraft:overworld", "minecraft:overworld"));
+        dimensions.put("minecraft:the_nether", noiseDimension("minecraft:the_nether", "minecraft:nether", "minecraft:nether"));
+        dimensions.put("minecraft:the_end", endDimension());
+
+        CompoundTag inner = new CompoundTag();
+        inner.put("dimensions", dimensions);
+        inner.putLong("seed", seed);
+        inner.putBoolean("generate_structures", true);
+        inner.putBoolean("bonus_chest", false);
+
+        CompoundTag root = new CompoundTag();
+        root.putInt("DataVersion", SharedConstants.getCurrentVersion().dataVersion().version());
+        root.put("data", inner);
+        return root;
+    }
+
+    private static CompoundTag noiseDimension(String type, String settings, String biomePreset) {
+        CompoundTag biomeSource = new CompoundTag();
+        biomeSource.putString("type", "minecraft:multi_noise");
+        biomeSource.putString("preset", biomePreset);
+
+        CompoundTag generator = new CompoundTag();
+        generator.putString("type", "minecraft:noise");
+        generator.putString("settings", settings);
+        generator.put("biome_source", biomeSource);
+
+        CompoundTag dim = new CompoundTag();
+        dim.putString("type", type);
+        dim.put("generator", generator);
+        return dim;
+    }
+
+    private static CompoundTag endDimension() {
+        CompoundTag biomeSource = new CompoundTag();
+        biomeSource.putString("type", "minecraft:the_end");
+
+        CompoundTag generator = new CompoundTag();
+        generator.putString("type", "minecraft:noise");
+        generator.putString("settings", "minecraft:end");
+        generator.put("biome_source", biomeSource);
+
+        CompoundTag dim = new CompoundTag();
+        dim.putString("type", "minecraft:the_end");
+        dim.put("generator", generator);
+        return dim;
     }
 
     private static CompoundTag buildVoid(ClientLevel level, long seed) {
@@ -78,7 +113,7 @@ public final class VoidWorldGenBuilder {
     }
 
     private static CompoundTag encode(HolderLookup.Provider registries, WorldDimensions dimensions,
-                                      long seed, boolean generateFeatures) {
+                                      long seed, boolean generateStructures) {
         RegistryOps<Tag> ops = RegistryOps.create(NbtOps.INSTANCE, registries);
         DataResult<Tag> encoded = WorldDimensions.CODEC.codec().encodeStart(ops, dimensions);
         Tag tag = encoded.result().orElseThrow(() ->
@@ -92,7 +127,7 @@ public final class VoidWorldGenBuilder {
             inner.put("dimensions", tag);
         }
         inner.putLong("seed", seed);
-        inner.putBoolean("generate_features", generateFeatures);
+        inner.putBoolean("generate_structures", generateStructures);
         inner.putBoolean("bonus_chest", false);
 
         CompoundTag root = new CompoundTag();
