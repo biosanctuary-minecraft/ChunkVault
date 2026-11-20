@@ -28,10 +28,11 @@ public abstract class ChunkCaptureMixin {
         }
         var chunk = level.getChunk(packet.getX(), packet.getZ());
         if (chunk instanceof LevelChunk levelChunk) {
-            MapCache.update(level, levelChunk);
-            manager.saveChunk(level, levelChunk);
-            ProjectMap.onChunkRecorded(level.dimension().identifier().toString(),
-                    levelChunk.getPos().x(), levelChunk.getPos().z());
+            if (manager.saveChunk(level, levelChunk)) {
+                MapCache.update(level, levelChunk);
+                ProjectMap.onChunkRecorded(level.dimension().identifier().toString(),
+                        levelChunk.getPos().x(), levelChunk.getPos().z());
+            }
         }
     }
 }
