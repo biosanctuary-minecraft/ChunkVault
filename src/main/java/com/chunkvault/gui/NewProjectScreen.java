@@ -33,6 +33,7 @@ public class NewProjectScreen extends Screen {
         nameBox.setMaxLength(48);
         nameBox.setValue(typedKeep);
         this.addRenderableWidget(nameBox);
+        this.setInitialFocus(nameBox);
 
         int half = (W - 6) / 2;
         this.addRenderableWidget(Button.builder(Lang.c("new.create"), b -> create())
