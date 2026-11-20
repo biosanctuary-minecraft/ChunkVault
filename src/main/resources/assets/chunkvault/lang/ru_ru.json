@@ -1,5 +1,6 @@
 {
-  "modmenu.chunkvault": "ChunkVault",
+  "key.category.chunkvault.main": "ChunkVault",
+  "key.chunkvault.open_map": "Открыть карту",
   "chunkvault.common.cancel": "Отмена",
   "chunkvault.common.back": "Назад",
   "chunkvault.common.done": "Готово",
