@@ -12,11 +12,14 @@ import net.minecraft.network.chat.Component;
 
 public class SettingsScreen extends Screen {
 
+    private static final int TOP_Y = 34;
     private static final int ROW_H = 24;
     private static final int WIDTH = 360;
-    private static final int SEED_GAP = 14;
+    private static final int SEED_GAP = 12;
+    private static final int FILTER_W = 110;
 
     private EditBox seedBox;
+    private Button filterButton;
     private final String serverKey = AutoRecord.serverKey();
     private final Screen parent;
 
@@ -43,7 +46,7 @@ public class SettingsScreen extends Screen {
     protected void init() {
         super.init();
         int x = (this.width - WIDTH) / 2;
-        int y = 40;
+        int y = TOP_Y;
         ChunkVaultSettings s = ChunkVaultSettings.get();
 
         this.addRenderableWidget(Button.builder(autoLabel(), b -> {
@@ -61,6 +64,26 @@ public class SettingsScreen extends Screen {
         this.addRenderableWidget(entitiesButton(x, y, s));
         y += ROW_H;
 
+        int mainW = WIDTH - FILTER_W - 6;
+        this.addRenderableWidget(Button.builder(containersLabel(s), b -> {
+                    s.setSaveContainers(!s.saveContainers());
+                    b.setMessage(containersLabel(s));
+                    if (filterButton != null) {
+                        filterButton.active = s.saveContainers();
+                    }
+                })
+                .bounds(x, y, mainW, 20)
+                .build());
+        filterButton = Button.builder(Lang.c("settings.containers.filter"), b -> {
+                    applySeed();
+                    Minecraft.getInstance().setScreenAndShow(new ContainerFilterScreen(this));
+                })
+                .bounds(x + mainW + 6, y, FILTER_W, 20)
+                .build();
+        filterButton.active = s.saveContainers();
+        this.addRenderableWidget(filterButton);
+        y += ROW_H;
+
         this.addRenderableWidget(mobsButton(x, y, s));
         y += ROW_H;
 
@@ -71,7 +94,7 @@ public class SettingsScreen extends Screen {
         seedBox.setValue(Long.toString(s.seed()));
         seedBox.setMaxLength(20);
         this.addRenderableWidget(seedBox);
-        y += ROW_H + 10;
+        y += ROW_H + 6;
 
         this.addRenderableWidget(Button.builder(Lang.c("common.done"), b -> this.onClose())
                 .bounds(x, y, WIDTH, 20)
@@ -93,6 +116,10 @@ public class SettingsScreen extends Screen {
 
     private static Component entitiesLabel(ChunkVaultSettings s) {
         return Lang.c("settings.entities", Lang.s(s.saveEntities() ? "common.on" : "common.off"));
+    }
+
+    private static Component containersLabel(ChunkVaultSettings s) {
+        return Lang.c("settings.containers", Lang.s(s.saveContainers() ? "common.on" : "common.off"));
     }
 
     private Button mobsButton(int x, int y, ChunkVaultSettings s) {
@@ -136,11 +163,11 @@ public class SettingsScreen extends Screen {
     @Override
     public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
         g.fill(0, 0, this.width, this.height, 0xE0101018);
-        g.centeredText(this.font, this.title.getString(), this.width / 2, 18, 0xFFFFFFFF);
+        g.centeredText(this.font, this.title.getString(), this.width / 2, 14, 0xFFFFFFFF);
 
         int x = (this.width - WIDTH) / 2;
-        g.text(this.font, Lang.s("settings.seed_label"), x, 40 + ROW_H * 4 + SEED_GAP - 11, 0xFFAAAAAA, true);
-        g.text(this.font, Lang.s("settings.seed_note"), x, this.height - 20, 0xFF808080, true);
+        g.text(this.font, Lang.s("settings.seed_label"), x, TOP_Y + ROW_H * 5 + SEED_GAP - 11, 0xFFAAAAAA, true);
+        g.text(this.font, Lang.s("settings.seed_note"), x, this.height - 14, 0xFF808080, true);
 
         super.extractRenderState(g, mouseX, mouseY, partialTick);
     }
