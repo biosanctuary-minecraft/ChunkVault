@@ -1,6 +1,6 @@
 {
   "key.category.chunkvault.main": "ChunkVault",
-  "key.chunkvault.open_map": "Открыть карту",
+  "key.chunkvault.open_map": "Открыть карту (по умолч.: C + V)",
   "chunkvault.common.cancel": "Отмена",
   "chunkvault.common.back": "Назад",
   "chunkvault.common.done": "Готово",
