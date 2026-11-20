@@ -2,6 +2,7 @@ package com.chunkvault.gui;
 
 import com.chunkvault.ChunkVaultClient;
 import com.chunkvault.Lang;
+import com.chunkvault.save.ContainerDatabase;
 import com.chunkvault.state.AutoRecord;
 import com.chunkvault.state.RecordingState;
 import com.mojang.blaze3d.platform.InputConstants;
@@ -15,7 +16,10 @@ import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.world.level.chunk.EmptyLevelChunk;
 import net.minecraft.world.level.chunk.LevelChunk;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 public class MapScreen extends Screen {
@@ -27,6 +31,9 @@ public class MapScreen extends Screen {
     private static final int RECT_BUDGET = 9000;
 
     private static double lastScale = 1.0;
+    private static boolean showPins = true;
+
+    private record PinGroup(ContainerDatabase.ContainerEntry top, int count) {}
 
     private double centerX;
     private double centerZ;
@@ -52,10 +59,24 @@ public class MapScreen extends Screen {
     private int newX1;
     private int expX0;
     private int expX1;
+    private int dbX0;
+    private int dbX1;
+    private int pinsX0;
+    private int pinsX1;
     private int setX0;
     private int setX1;
     private String toast;
     private long toastUntil;
+
+    private boolean draggingMap;
+    private boolean dragged;
+    private double dragStartX;
+    private double dragStartY;
+
+    private PinGroup hoveredPin;
+    private int focusX;
+    private int focusZ;
+    private long focusUntil;
 
     private int[] zoneX0 = new int[256];
     private int[] zoneX1 = new int[256];
@@ -76,6 +97,19 @@ public class MapScreen extends Screen {
             centerX = player.getX();
             centerZ = player.getZ();
         }
+    }
+
+    public void focusOn(int x, int z) {
+        centerX = x + 0.5;
+        centerZ = z + 0.5;
+        if (scale < 2.0) {
+            scale = 2.0;
+            lastScale = scale;
+        }
+        focusX = x;
+        focusZ = z;
+        focusUntil = System.currentTimeMillis() + 3000;
+        showPins = true;
     }
 
     @Override
@@ -262,6 +296,25 @@ public class MapScreen extends Screen {
         drawArrow(g, pcx, pcy, -Math.sin(yaw), Math.cos(yaw), 3.2 * dev + 5.0);
 
         g.pose().popMatrix();
+
+        hoveredPin = null;
+        if (hasProject && showPins) {
+            drawContainerPins(g, dimensionId, mapCX, mapCY, minCx, maxCx, minCz, maxCz, mouseX, mouseY, inMap);
+        }
+
+        long now = System.currentTimeMillis();
+        if (focusUntil > now) {
+            int fx = (int) Math.round(mapCX + (focusX + 0.5 - centerX) * scale);
+            int fy = (int) Math.round(mapCY + (focusZ + 0.5 - centerZ) * scale);
+            boolean pulse = ((now / 180) & 1) == 0;
+            int ringR = pulse ? 9 : 7;
+            int ringColor = pulse ? 0xFFFFFFFF : 0xFFFFD070;
+            g.fill(fx - ringR, fy - ringR, fx + ringR, fy - ringR + 2, ringColor);
+            g.fill(fx - ringR, fy + ringR - 2, fx + ringR, fy + ringR, ringColor);
+            g.fill(fx - ringR, fy - ringR, fx - ringR + 2, fy + ringR, ringColor);
+            g.fill(fx + ringR - 2, fy - ringR, fx + ringR, fy + ringR, ringColor);
+        }
+
         g.disableScissor();
 
         g.fill(0, 0, this.width, TOP_BAR, 0xFF1A1A22);
@@ -289,10 +342,19 @@ public class MapScreen extends Screen {
             btnX0 = endX + 6;
             btnX1 = drawTopButton(g, btnX0, recording ? Lang.s("button.stop") : Lang.s("button.record"),
                     recording ? 0xFF7A2020 : 0xFFB03030, recording ? 0xFF9E2C2C : 0xFFD84848, mouseX, mouseY);
-            endX = btnX1;
+            dbX0 = btnX1 + 6;
+            dbX1 = drawTopButton(g, dbX0, Lang.s("button.chests"), 0xFF7A5618, 0xFF9E7022, mouseX, mouseY);
+            pinsX0 = dbX1 + 6;
+            pinsX1 = drawTopButton(g, pinsX0, showPins ? Lang.s("button.pins_on") : Lang.s("button.pins_off"),
+                    showPins ? 0xFF345E4A : 0xFF3A3D4A, showPins ? 0xFF477D63 : 0xFF505566, mouseX, mouseY);
+            endX = pinsX1;
         } else {
             btnX0 = 0;
             btnX1 = 0;
+            dbX0 = 0;
+            dbX1 = 0;
+            pinsX0 = 0;
+            pinsX1 = 0;
         }
 
         setX0 = endX + 6;
@@ -331,11 +393,120 @@ public class MapScreen extends Screen {
         g.text(this.font, dimensionId, this.width - this.font.width(dimensionId) - 8,
                 this.height - BOTTOM_BAR + 5, 0xFFCCCCCC, true);
 
-        if (toast != null && System.currentTimeMillis() < toastUntil) {
+        if (toast != null && now < toastUntil) {
             int tw = this.font.width(toast) + 16;
             int tx0 = (this.width - tw) / 2;
             g.fill(tx0, TOP_BAR + 6, tx0 + tw, TOP_BAR + 24, 0xE0101015);
             g.text(this.font, toast, tx0 + 8, TOP_BAR + 11, 0xFF70FF90, true);
+        }
+
+        if (hoveredPin != null) {
+            drawPinTooltip(g, hoveredPin, mouseX, mouseY);
+        }
+    }
+
+    private void drawContainerPins(GuiGraphicsExtractor g, String dimensionId,
+                                   double mapCX, double mapCY,
+                                   int minCx, int maxCx, int minCz, int maxCz,
+                                   int mouseX, int mouseY, boolean inMap) {
+        List<ContainerDatabase.ContainerEntry> visible = ContainerDatabase.inChunkRange(dimensionId, minCx, maxCx, minCz, maxCz);
+        if (visible.isEmpty()) {
+            return;
+        }
+        Map<Long, List<ContainerDatabase.ContainerEntry>> grouped = new LinkedHashMap<>();
+        for (ContainerDatabase.ContainerEntry e : visible) {
+            if (ContainerDatabase.isSecondaryHalf(e)) {
+                continue;
+            }
+            long colKey = (((long) e.x()) << 32) | (e.z() & 0xFFFFFFFFL);
+            grouped.computeIfAbsent(colKey, k -> new ArrayList<>()).add(e);
+        }
+
+        int pinR = Math.max(3, Math.min(5, (int) Math.round(scale * 0.5 + 2.5)));
+        int hitR = Math.max(pinR + 2, 6);
+        PinGroup bestHover = null;
+        double bestDistSq = Double.MAX_VALUE;
+
+        for (List<ContainerDatabase.ContainerEntry> col : grouped.values()) {
+            ContainerDatabase.ContainerEntry top = col.get(0);
+            for (int i = 1; i < col.size(); i++) {
+                if (col.get(i).y() > top.y()) {
+                    top = col.get(i);
+                }
+            }
+            int sx = (int) Math.round(mapCX + (top.x() + 0.5 - centerX) * scale);
+            int sy = (int) Math.round(mapCY + (top.z() + 0.5 - centerZ) * scale);
+            if (sx < -10 || sx > this.width + 10 || sy < TOP_BAR - 10 || sy > this.height - BOTTOM_BAR + 10) {
+                continue;
+            }
+
+            boolean near = inMap && Math.abs(mouseX - sx) <= hitR && Math.abs(mouseY - sy) <= hitR;
+            if (near) {
+                double d2 = (mouseX - sx) * (mouseX - sx) + (mouseY - sy) * (mouseY - sy);
+                if (d2 < bestDistSq) {
+                    bestDistSq = d2;
+                    bestHover = new PinGroup(top, col.size());
+                }
+            }
+
+            int color = ContainerDatabase.colorFor(top);
+            int outline = near ? 0xFFFFFFFF : 0xE0000000;
+            g.fill(sx - pinR - 1, sy - pinR - 1, sx + pinR + 1, sy + pinR + 1, outline);
+            g.fill(sx - pinR, sy - pinR, sx + pinR, sy + pinR, color);
+
+            if (col.size() > 1 && scale >= 0.75) {
+                String badge = String.valueOf(col.size());
+                int bw = this.font.width(badge);
+                g.fill(sx + pinR - 2, sy + pinR - 4, sx + pinR + bw + 1, sy + pinR + 6, 0xE014161C);
+                g.text(this.font, badge, sx + pinR, sy + pinR - 3, 0xFFFFFFFF, false);
+            }
+        }
+        hoveredPin = bestHover;
+    }
+
+    private void drawPinTooltip(GuiGraphicsExtractor g, PinGroup pin, int mouseX, int mouseY) {
+        ContainerDatabase.ContainerEntry e = pin.top();
+        ContainerDatabase.ContainerEntry partner = ContainerDatabase.partnerOf(e);
+        boolean dbl = partner != null && e.slotCount() == 27 && partner.slotCount() == 27;
+        int filled = dbl ? (e.filledSlots() + partner.filledSlots()) : e.filledSlots();
+        int total = dbl ? 54 : e.slotCount();
+
+        List<String> lines = new ArrayList<>();
+        List<Integer> colors = new ArrayList<>();
+
+        String title = e.displayTitle() + (dbl ? " (" + Lang.s("viewer.double") + ")" : "");
+        lines.add(title);
+        colors.add(0xFFFFFFFF);
+
+        lines.add("X:" + e.x() + " Y:" + e.y() + " Z:" + e.z() + "  •  " + filled + "/" + total);
+        colors.add(0xFF9AA0B0);
+
+        if (pin.count() > 1) {
+            lines.add(Lang.s("map.pin.stack", pin.count()));
+            colors.add(0xFFFFD070);
+        }
+        lines.add(Lang.s("map.pin.click"));
+        colors.add(0xFF70FF90);
+
+        int maxW = 0;
+        for (String line : lines) {
+            maxW = Math.max(maxW, this.font.width(line));
+        }
+        int boxW = maxW + 12;
+        int boxH = lines.size() * 11 + 8;
+        int tx = mouseX + 12;
+        int ty = mouseY + 12;
+        if (tx + boxW > this.width - 4) {
+            tx = Math.max(4, mouseX - boxW - 8);
+        }
+        if (ty + boxH > this.height - BOTTOM_BAR - 4) {
+            ty = Math.max(TOP_BAR + 4, mouseY - boxH - 8);
+        }
+
+        g.fill(tx - 1, ty - 1, tx + boxW + 1, ty + boxH + 1, 0xFF3A3A48);
+        g.fill(tx, ty, tx + boxW, ty + boxH, 0xF214161C);
+        for (int i = 0; i < lines.size(); i++) {
+            g.text(this.font, lines.get(i), tx + 6, ty + 5 + i * 11, colors.get(i), true);
         }
     }
 
@@ -537,6 +708,14 @@ public class MapScreen extends Screen {
                 toggleRecording();
                 return true;
             }
+            if (dbX1 > dbX0 && mx >= dbX0 && mx < dbX1) {
+                Minecraft.getInstance().setScreenAndShow(new ContainerDatabaseScreen(this));
+                return true;
+            }
+            if (pinsX1 > pinsX0 && mx >= pinsX0 && mx < pinsX1) {
+                showPins = !showPins;
+                return true;
+            }
             if (mx >= setX0 && mx < setX1) {
                 Minecraft.getInstance().setScreenAndShow(new SettingsScreen(this));
                 return true;
@@ -546,7 +725,12 @@ public class MapScreen extends Screen {
             recenterOnPlayer();
             return true;
         }
-        if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+        if (event.button() == InputConstants.MOUSE_BUTTON_LEFT
+                && event.y() >= TOP_BAR && event.y() < this.height - BOTTOM_BAR) {
+            draggingMap = true;
+            dragged = false;
+            dragStartX = event.x();
+            dragStartY = event.y();
             return true;
         }
         return super.mouseClicked(event, isDoubleClick);
@@ -595,12 +779,33 @@ public class MapScreen extends Screen {
 
     @Override
     public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
-        if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+        if (event.button() == InputConstants.MOUSE_BUTTON_LEFT && draggingMap) {
+            if (!dragged && Math.hypot(event.x() - dragStartX, event.y() - dragStartY) >= 4.0) {
+                dragged = true;
+            }
             centerX -= dragX / scale;
             centerZ -= dragY / scale;
             return true;
         }
         return super.mouseDragged(event, dragX, dragY);
+    }
+
+    @Override
+    public boolean mouseReleased(MouseButtonEvent event) {
+        if (event.button() == InputConstants.MOUSE_BUTTON_LEFT && draggingMap) {
+            draggingMap = false;
+            if (!dragged && hoveredPin != null && ProjectMap.isOpen()) {
+                Minecraft mc = Minecraft.getInstance();
+                if (mc.level != null) {
+                    String dim = mc.level.dimension().identifier().toString();
+                    ContainerDatabase.ContainerEntry top = hoveredPin.top();
+                    mc.setScreenAndShow(new ContainerViewerScreen(this, dim, top.x(), top.z(), top.key()));
+                    return true;
+                }
+            }
+            return true;
+        }
+        return super.mouseReleased(event);
     }
 
     @Override
