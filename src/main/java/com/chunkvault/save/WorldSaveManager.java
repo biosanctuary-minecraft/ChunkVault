@@ -56,7 +56,6 @@ public final class WorldSaveManager {
         return t;
     });
 
-    private final AtomicInteger chunksSaved = new AtomicInteger();
     private final AtomicInteger chestsSeen = new AtomicInteger();
     private volatile boolean closed;
 
@@ -71,7 +70,7 @@ public final class WorldSaveManager {
     }
 
     public int chunksSaved() {
-        return chunksSaved.get();
+        return recordedChunks.size();
     }
 
     public void notifyChestCaptured() {
@@ -196,7 +195,6 @@ public final class WorldSaveManager {
             int chunkZ = chunk.getPos().z();
             String regionFolder = regionFolderFor(level);
             recordedChunks.add(level.dimension().identifier() + ":" + chunkX + "," + chunkZ);
-            chunksSaved.incrementAndGet();
 
             ioExecutor.execute(() -> writeChunkAsync(regionFolder, chunkX, chunkZ, tag));
         } catch (RejectedExecutionException ignored) {
