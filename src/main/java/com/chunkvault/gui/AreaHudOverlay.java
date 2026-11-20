@@ -29,7 +29,7 @@ public final class AreaHudOverlay {
 
     private static void extract(GuiGraphicsExtractor g, DeltaTracker deltaTracker) {
         Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null || mc.level == null || mc.options.hideGui) {
+        if (mc.player == null || mc.level == null || mc.gui.hud.isHidden()) {
             return;
         }
         if (!ProjectMap.isOpen() || !AreaPlan.isActive() || !AreaPlan.isHudVisible()) {
