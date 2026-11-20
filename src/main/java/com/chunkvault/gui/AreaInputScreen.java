@@ -199,7 +199,7 @@ public class AreaInputScreen extends Screen {
                 int cx = Integer.parseInt(valCx.trim());
                 int cz = Integer.parseInt(valCz.trim());
                 int rad = Integer.parseInt(valRadius.trim());
-                if (rad < 16 || rad > 4096) {
+                if (rad < 16 || rad > AreaPlan.WORLD_BORDER) {
                     error = Lang.s("area.input.err_radius");
                     return;
                 }
@@ -222,35 +222,39 @@ public class AreaInputScreen extends Screen {
         }
     }
 
+    private static int clampBlock(long b) {
+        return (int) Math.max(-AreaPlan.WORLD_BORDER, Math.min(AreaPlan.WORLD_BORDER, b));
+    }
+
     private String previewText() {
         try {
-            int cx1;
-            int cz1;
-            int cx2;
-            int cz2;
+            long cx1;
+            long cz1;
+            long cx2;
+            long cz2;
             if (!radiusMode) {
                 if (boxX1 == null || boxZ1 == null || boxX2 == null || boxZ2 == null) {
                     return null;
                 }
-                cx1 = Integer.parseInt(boxX1.getValue().trim()) >> 4;
-                cz1 = Integer.parseInt(boxZ1.getValue().trim()) >> 4;
-                cx2 = Integer.parseInt(boxX2.getValue().trim()) >> 4;
-                cz2 = Integer.parseInt(boxZ2.getValue().trim()) >> 4;
+                cx1 = clampBlock(Long.parseLong(boxX1.getValue().trim())) >> 4;
+                cz1 = clampBlock(Long.parseLong(boxZ1.getValue().trim())) >> 4;
+                cx2 = clampBlock(Long.parseLong(boxX2.getValue().trim())) >> 4;
+                cz2 = clampBlock(Long.parseLong(boxZ2.getValue().trim())) >> 4;
             } else {
                 if (boxCx == null || boxCz == null || boxRadius == null) {
                     return null;
                 }
-                int cx = Integer.parseInt(boxCx.getValue().trim());
-                int cz = Integer.parseInt(boxCz.getValue().trim());
-                int r = Math.max(16, Math.min(4096, Integer.parseInt(boxRadius.getValue().trim())));
-                cx1 = (cx - r) >> 4;
-                cz1 = (cz - r) >> 4;
-                cx2 = (cx + r) >> 4;
-                cz2 = (cz + r) >> 4;
+                long cx = Long.parseLong(boxCx.getValue().trim());
+                long cz = Long.parseLong(boxCz.getValue().trim());
+                long r = Math.max(16L, Math.min(AreaPlan.WORLD_BORDER, Long.parseLong(boxRadius.getValue().trim())));
+                cx1 = clampBlock(cx - r) >> 4;
+                cz1 = clampBlock(cz - r) >> 4;
+                cx2 = clampBlock(cx + r) >> 4;
+                cz2 = clampBlock(cz + r) >> 4;
             }
-            int w = Math.min(512, Math.abs(cx2 - cx1) + 1);
-            int h = Math.min(512, Math.abs(cz2 - cz1) + 1);
-            return Lang.s("area.input.preview", w, h, w * h, w * 16, h * 16);
+            long w = Math.abs(cx2 - cx1) + 1L;
+            long h = Math.abs(cz2 - cz1) + 1L;
+            return Lang.s("area.input.preview", w, h, w * h, w * 16L, h * 16L);
         } catch (NumberFormatException ignored) {
             return null;
         }
