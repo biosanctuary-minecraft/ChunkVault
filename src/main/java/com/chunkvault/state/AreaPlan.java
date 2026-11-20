@@ -24,9 +24,9 @@ import java.util.stream.Stream;
 public final class AreaPlan {
 
     public record Progress(
-            int recorded,
-            int total,
-            int remaining,
+            long recorded,
+            long total,
+            long remaining,
             double percent,
             int nearestCx,
             int nearestCz,
@@ -35,7 +35,9 @@ public final class AreaPlan {
 
     public record TrimResult(int removedChunks, int removedContainers) {}
 
-    private static final int MAX_SPAN_CHUNKS = 512;
+    public static final int WORLD_BORDER = 30_000_000;
+    private static final int MIN_CHUNK = -WORLD_BORDER >> 4;
+    private static final int MAX_CHUNK = WORLD_BORDER >> 4;
 
     private static final Object LOCK = new Object();
     private static final AtomicInteger PLAN_REV = new AtomicInteger();
@@ -118,15 +120,23 @@ public final class AreaPlan {
         return allowsChunk(dim, x >> 4, z >> 4);
     }
 
-    public static int totalChunks() {
+    public static long totalChunks() {
         if (!active) {
-            return 0;
+            return 0L;
         }
-        return (maxCx - minCx + 1) * (maxCz - minCz + 1);
+        return (long) (maxCx - minCx + 1) * (long) (maxCz - minCz + 1);
     }
 
     public static void resetAutoStopTrigger() {
         autoStopTriggered = false;
+    }
+
+    private static int clampChunk(int c) {
+        return Math.max(MIN_CHUNK, Math.min(MAX_CHUNK, c));
+    }
+
+    private static int clampBlock(long b) {
+        return (int) Math.max(-WORLD_BORDER, Math.min(WORLD_BORDER, b));
     }
 
     public static void loadForProject(Path projectDir) {
@@ -150,10 +160,10 @@ public final class AreaPlan {
                     p.load(in);
                     active = Boolean.parseBoolean(p.getProperty("active", "false"));
                     dimension = p.getProperty("dimension", "minecraft:overworld");
-                    int a = Integer.parseInt(p.getProperty("minCx", "0"));
-                    int b = Integer.parseInt(p.getProperty("maxCx", "0"));
-                    int c = Integer.parseInt(p.getProperty("minCz", "0"));
-                    int d = Integer.parseInt(p.getProperty("maxCz", "0"));
+                    int a = clampChunk(Integer.parseInt(p.getProperty("minCx", "0")));
+                    int b = clampChunk(Integer.parseInt(p.getProperty("maxCx", "0")));
+                    int c = clampChunk(Integer.parseInt(p.getProperty("minCz", "0")));
+                    int d = clampChunk(Integer.parseInt(p.getProperty("maxCz", "0")));
                     minCx = Math.min(a, b);
                     maxCx = Math.max(a, b);
                     minCz = Math.min(c, d);
@@ -182,21 +192,15 @@ public final class AreaPlan {
 
     public static void setFromChunks(String dim, int cx1, int cz1, int cx2, int cz2) {
         synchronized (LOCK) {
-            int x0 = Math.min(cx1, cx2);
-            int x1 = Math.max(cx1, cx2);
-            int z0 = Math.min(cz1, cz2);
-            int z1 = Math.max(cz1, cz2);
-            if (x1 - x0 + 1 > MAX_SPAN_CHUNKS) {
-                x1 = x0 + MAX_SPAN_CHUNKS - 1;
-            }
-            if (z1 - z0 + 1 > MAX_SPAN_CHUNKS) {
-                z1 = z0 + MAX_SPAN_CHUNKS - 1;
-            }
+            int a = clampChunk(cx1);
+            int b = clampChunk(cx2);
+            int c = clampChunk(cz1);
+            int d = clampChunk(cz2);
             dimension = dim;
-            minCx = x0;
-            maxCx = x1;
-            minCz = z0;
-            maxCz = z1;
+            minCx = Math.min(a, b);
+            maxCx = Math.max(a, b);
+            minCz = Math.min(c, d);
+            maxCz = Math.max(c, d);
             active = true;
             autoStopTriggered = false;
             invalidateLocked();
@@ -205,12 +209,16 @@ public final class AreaPlan {
     }
 
     public static void setFromBlocks(String dim, int x1, int z1, int x2, int z2) {
-        setFromChunks(dim, x1 >> 4, z1 >> 4, x2 >> 4, z2 >> 4);
+        setFromChunks(dim, clampBlock(x1) >> 4, clampBlock(z1) >> 4, clampBlock(x2) >> 4, clampBlock(z2) >> 4);
     }
 
     public static void setRadiusBlocks(String dim, int centerX, int centerZ, int radiusBlocks) {
-        int r = Math.max(16, radiusBlocks);
-        setFromBlocks(dim, centerX - r, centerZ - r, centerX + r, centerZ + r);
+        long r = Math.max(16L, Math.min(WORLD_BORDER, radiusBlocks));
+        int x1 = clampBlock((long) centerX - r);
+        int z1 = clampBlock((long) centerZ - r);
+        int x2 = clampBlock((long) centerX + r);
+        int z2 = clampBlock((long) centerZ + r);
+        setFromChunks(dim, x1 >> 4, z1 >> 4, x2 >> 4, z2 >> 4);
     }
 
     public static void clearPlan() {
@@ -384,33 +392,113 @@ public final class AreaPlan {
         int x1 = maxCx;
         int z0 = minCz;
         int z1 = maxCz;
-        int total = (x1 - x0 + 1) * (z1 - z0 + 1);
-        int recorded = 0;
+        long total = (long) (x1 - x0 + 1) * (long) (z1 - z0 + 1);
+        long recorded = 0L;
+
+        for (long key : recordedMap.keySet()) {
+            int cx = MapCache.keyX(key);
+            int cz = MapCache.keyZ(key);
+            if (cx >= x0 && cx <= x1 && cz >= z0 && cz <= z1) {
+                recorded++;
+            }
+        }
+
+        long remaining = Math.max(0L, total - recorded);
         boolean hasMissing = false;
         int nearestCx = 0;
         int nearestCz = 0;
-        long bestDistSq = Long.MAX_VALUE;
 
-        for (int cz = z0; cz <= z1; cz++) {
-            for (int cx = x0; cx <= x1; cx++) {
-                if (recordedMap.containsKey(MapCache.key(cx, cz))) {
-                    recorded++;
-                } else {
-                    long dx = cx - playerCx;
-                    long dz = cz - playerCz;
-                    long d2 = dx * dx + dz * dz;
-                    if (d2 < bestDistSq) {
-                        bestDistSq = d2;
-                        nearestCx = cx;
-                        nearestCz = cz;
-                        hasMissing = true;
+        if (remaining > 0L) {
+            int startCx = Math.max(x0, Math.min(x1, playerCx));
+            int startCz = Math.max(z0, Math.min(z1, playerCz));
+            if (!recordedMap.containsKey(MapCache.key(startCx, startCz))) {
+                hasMissing = true;
+                nearestCx = startCx;
+                nearestCz = startCz;
+            } else {
+                long bestDistSq = Long.MAX_VALUE;
+                int maxRing = Math.max(
+                        Math.max(startCx - x0, x1 - startCx),
+                        Math.max(startCz - z0, z1 - startCz)
+                );
+                for (int r = 1; r <= maxRing; r++) {
+                    if (hasMissing && (long) r * (long) r >= bestDistSq) {
+                        break;
+                    }
+                    int rx0 = Math.max(x0, startCx - r);
+                    int rx1 = Math.min(x1, startCx + r);
+                    int rz0 = Math.max(z0, startCz - r);
+                    int rz1 = Math.min(z1, startCz + r);
+
+                    if (startCz - r >= z0) {
+                        int cz = startCz - r;
+                        for (int cx = rx0; cx <= rx1; cx++) {
+                            if (!recordedMap.containsKey(MapCache.key(cx, cz))) {
+                                long dx = cx - playerCx;
+                                long dz = cz - playerCz;
+                                long d2 = dx * dx + dz * dz;
+                                if (d2 < bestDistSq) {
+                                    bestDistSq = d2;
+                                    nearestCx = cx;
+                                    nearestCz = cz;
+                                    hasMissing = true;
+                                }
+                            }
+                        }
+                    }
+                    if (startCz + r <= z1) {
+                        int cz = startCz + r;
+                        for (int cx = rx0; cx <= rx1; cx++) {
+                            if (!recordedMap.containsKey(MapCache.key(cx, cz))) {
+                                long dx = cx - playerCx;
+                                long dz = cz - playerCz;
+                                long d2 = dx * dx + dz * dz;
+                                if (d2 < bestDistSq) {
+                                    bestDistSq = d2;
+                                    nearestCx = cx;
+                                    nearestCz = cz;
+                                    hasMissing = true;
+                                }
+                            }
+                        }
+                    }
+                    if (startCx - r >= x0) {
+                        int cx = startCx - r;
+                        for (int cz = rz0 + 1; cz <= rz1 - 1; cz++) {
+                            if (!recordedMap.containsKey(MapCache.key(cx, cz))) {
+                                long dx = cx - playerCx;
+                                long dz = cz - playerCz;
+                                long d2 = dx * dx + dz * dz;
+                                if (d2 < bestDistSq) {
+                                    bestDistSq = d2;
+                                    nearestCx = cx;
+                                    nearestCz = cz;
+                                    hasMissing = true;
+                                }
+                            }
+                        }
+                    }
+                    if (startCx + r <= x1) {
+                        int cx = startCx + r;
+                        for (int cz = rz0 + 1; cz <= rz1 - 1; cz++) {
+                            if (!recordedMap.containsKey(MapCache.key(cx, cz))) {
+                                long dx = cx - playerCx;
+                                long dz = cz - playerCz;
+                                long d2 = dx * dx + dz * dz;
+                                if (d2 < bestDistSq) {
+                                    bestDistSq = d2;
+                                    nearestCx = cx;
+                                    nearestCz = cz;
+                                    hasMissing = true;
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
 
-        int remaining = Math.max(0, total - recorded);
-        double percent = total > 0 ? (recorded * 100.0 / total) : 0.0;
+        double percent = total > 0L ? (recorded * 100.0 / total) : 0.0;
         Progress result = new Progress(recorded, total, remaining, percent, nearestCx, nearestCz, hasMissing);
 
         synchronized (LOCK) {
@@ -434,7 +522,7 @@ public final class AreaPlan {
         int pcx = mc.player.blockPosition().getX() >> 4;
         int pcz = mc.player.blockPosition().getZ() >> 4;
         Progress p = computeProgress(pcx, pcz);
-        if (p.total() > 0 && p.remaining() == 0) {
+        if (p.total() > 0L && p.remaining() == 0L) {
             autoStopTriggered = true;
             var res = ChunkVaultClient.stopRecording();
             if (res != null && mc.player != null) {
