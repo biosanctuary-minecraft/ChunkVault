@@ -168,13 +168,13 @@ public final class ProjectMap {
 
     private static void write(Path file, String dimensionId, Map<Long, MapCache.ChunkColors> map) throws IOException {
         Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
-        ArrayList> entries = new ArrayList<>(map.entrySet());
+        var entries = new ArrayList<>(map.entrySet());
         try (DataOutputStream out = new DataOutputStream(
                 new BufferedOutputStream(new GZIPOutputStream(Files.newOutputStream(tmp))))) {
             out.writeInt(MAGIC);
             out.writeUTF(dimensionId);
             out.writeInt(entries.size());
-            for (Map.Entry<Long, MapCache.ChunkColors> e : entries) {
+            for (var e : entries) {
                 out.writeInt(MapCache.keyX(e.getKey()));
                 out.writeInt(MapCache.keyZ(e.getKey()));
                 for (int v : e.getValue().px) {
