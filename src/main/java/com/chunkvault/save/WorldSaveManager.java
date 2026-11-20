@@ -32,6 +32,11 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public final class WorldSaveManager {
 
@@ -41,13 +46,19 @@ public final class WorldSaveManager {
     private final Path rootDir;
     private final Path gameDir;
     private final String levelName;
-    private final Map<String, SimpleRegionFile> openRegions = new ConcurrentHashMap<>();
+    private final Map<String, SimpleRegionFile> openRegions = new HashMap<>();
     private final Set<String> recordedChunks = ConcurrentHashMap.newKeySet();
     private final Map<UUID, EntityRecord> entityRecords = new ConcurrentHashMap<>();
     private final Map<String, ContainerSnapshot> containers = new ConcurrentHashMap<>();
+    private final ExecutorService ioExecutor = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "chunkvault-io");
+        t.setDaemon(true);
+        return t;
+    });
 
-    private volatile int chunksSaved;
-    private volatile int chestsSeen;
+    private final AtomicInteger chunksSaved = new AtomicInteger();
+    private final AtomicInteger chestsSeen = new AtomicInteger();
+    private volatile boolean closed;
 
     public WorldSaveManager(Path rootDir, Path gameDir, String levelName) {
         this.rootDir = rootDir;
@@ -60,15 +71,15 @@ public final class WorldSaveManager {
     }
 
     public int chunksSaved() {
-        return chunksSaved;
+        return chunksSaved.get();
     }
 
     public void notifyChestCaptured() {
-        chestsSeen++;
+        chestsSeen.incrementAndGet();
     }
 
     public int chestsSeen() {
-        return chestsSeen;
+        return chestsSeen.get();
     }
 
     public int entitiesSeen() {
@@ -93,11 +104,16 @@ public final class WorldSaveManager {
         return String.valueOf(BuiltInRegistries.BLOCK.getKey(be.getBlockState().getBlock()));
     }
 
-    public synchronized void rememberContainer(ClientLevel level, BlockEntity be) {
+    public void rememberContainer(ClientLevel level, BlockEntity be) {
         try {
             CompoundTag tag = be.saveWithFullMetadata(level.registryAccess());
             containers.put(containerKey(level, be.getBlockPos()), new ContainerSnapshot(typeIdOf(be), tag));
-            saveContainers();
+            if (!closed) {
+                try {
+                    ioExecutor.execute(this::saveContainers);
+                } catch (RejectedExecutionException ignored) {
+                }
+            }
         } catch (Throwable t) {
             System.err.println("[ChunkVault] Failed to cache container at " + be.getBlockPos() + ": " + t);
         }
@@ -156,41 +172,54 @@ public final class WorldSaveManager {
         return "dimensions/" + id.getNamespace() + "/" + id.getPath() + "/region";
     }
 
-    public synchronized void saveChunk(ClientLevel level, LevelChunk chunk) {
+    private SimpleRegionFile openRegion(String folder, int regionX, int regionZ) throws IOException {
+        String key = folder + ":" + regionX + "," + regionZ;
+        SimpleRegionFile region = openRegions.get(key);
+        if (region == null) {
+            Path dir = rootDir.resolve(folder);
+            Files.createDirectories(dir);
+            region = new SimpleRegionFile(dir.resolve("r." + regionX + "." + regionZ + ".mca"));
+            openRegions.put(key, region);
+        }
+        return region;
+    }
+
+    public void saveChunk(ClientLevel level, LevelChunk chunk) {
+        if (closed) {
+            return;
+        }
         try {
             CompoundTag tag = ChunkNbtWriter.write(level, chunk,
                     (pos, be) -> containerOverride(level, pos, be));
 
-            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-            NbtIo.write(tag, new DataOutputStream(bytes));
-
             int chunkX = chunk.getPos().x();
             int chunkZ = chunk.getPos().z();
-            int regionX = Math.floorDiv(chunkX, 32);
-            int regionZ = Math.floorDiv(chunkZ, 32);
             String regionFolder = regionFolderFor(level);
-            String regionKey = regionFolder + ":" + regionX + "," + regionZ;
-
-            SimpleRegionFile region = openRegions.computeIfAbsent(regionKey, k -> {
-                try {
-                    Path dir = rootDir.resolve(regionFolder);
-                    Files.createDirectories(dir);
-                    return new SimpleRegionFile(dir.resolve("r." + regionX + "." + regionZ + ".mca"));
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
-                }
-            });
-
-            region.writeChunk(Math.floorMod(chunkX, 32), Math.floorMod(chunkZ, 32), bytes.toByteArray());
             recordedChunks.add(level.dimension().identifier() + ":" + chunkX + "," + chunkZ);
-            chunksSaved++;
+            chunksSaved.incrementAndGet();
+
+            ioExecutor.execute(() -> writeChunkAsync(regionFolder, chunkX, chunkZ, tag));
+        } catch (RejectedExecutionException ignored) {
         } catch (Exception e) {
             System.err.println("[ChunkVault] Failed to save chunk " + chunk.getPos() + ": " + e);
         }
     }
 
-    public synchronized void snapshotEntities(ClientLevel level) {
-        if (!ChunkVaultSettings.get().saveEntities()) {
+    private void writeChunkAsync(String regionFolder, int chunkX, int chunkZ, CompoundTag tag) {
+        try {
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            NbtIo.write(tag, new DataOutputStream(bytes));
+            int regionX = Math.floorDiv(chunkX, 32);
+            int regionZ = Math.floorDiv(chunkZ, 32);
+            SimpleRegionFile region = openRegion(regionFolder, regionX, regionZ);
+            region.writeChunk(Math.floorMod(chunkX, 32), Math.floorMod(chunkZ, 32), bytes.toByteArray());
+        } catch (Exception e) {
+            System.err.println("[ChunkVault] Failed to write chunk " + chunkX + "," + chunkZ + ": " + e);
+        }
+    }
+
+    public void snapshotEntities(ClientLevel level) {
+        if (closed || !ChunkVaultSettings.get().saveEntities()) {
             return;
         }
         String dimensionId = level.dimension().identifier().toString();
@@ -239,16 +268,7 @@ public final class WorldSaveManager {
 
                 int regionX = Math.floorDiv(first.chunkX(), 32);
                 int regionZ = Math.floorDiv(first.chunkZ(), 32);
-                String key = first.entitiesFolder() + ":" + regionX + "," + regionZ;
-                SimpleRegionFile region = openRegions.computeIfAbsent(key, k -> {
-                    try {
-                        Path dir = rootDir.resolve(first.entitiesFolder());
-                        Files.createDirectories(dir);
-                        return new SimpleRegionFile(dir.resolve("r." + regionX + "." + regionZ + ".mca"));
-                    } catch (IOException e) {
-                        throw new RuntimeException(e);
-                    }
-                });
+                SimpleRegionFile region = openRegion(first.entitiesFolder(), regionX, regionZ);
                 region.writeChunk(Math.floorMod(first.chunkX(), 32), Math.floorMod(first.chunkZ(), 32), bytes.toByteArray());
             } catch (Exception e) {
                 System.err.println("[ChunkVault] Failed to write entity chunk: " + e);
@@ -257,6 +277,13 @@ public final class WorldSaveManager {
     }
 
     public synchronized void closeAndFinish(BlockPos spawnPos, UUID uuid, CompoundTag playerTag) {
+        closed = true;
+        ioExecutor.shutdown();
+        try {
+            ioExecutor.awaitTermination(30, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
         flushEntities();
         for (SimpleRegionFile region : openRegions.values()) {
             try {
