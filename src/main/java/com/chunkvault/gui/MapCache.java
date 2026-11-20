@@ -3,6 +3,7 @@ package com.chunkvault.gui;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Holder;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.world.level.biome.Biome;
@@ -16,6 +17,7 @@ import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.MapColor;
 
 import java.util.Arrays;
+import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -45,11 +47,8 @@ public final class MapCache {
         }
     }
 
-    private static final int BIOME_WATER = 0;
-    private static final int BIOME_GRASS = 1;
-    private static final int BIOME_FOLIAGE = 2;
-
     private static final Map<String, Map<Long, ChunkColors>> DIMENSIONS = new ConcurrentHashMap<>();
+    private static final Map<Block, Integer> BLOCK_PALETTE = buildPalette();
     private static Object lastConnection;
 
     private MapCache() {}
@@ -104,87 +103,51 @@ public final class MapCache {
 
     private static LevelChunk loadedChunk(ClientLevel level, int cx, int cz) {
         var c = level.getChunk(cx, cz);
-        return c instanceof LevelChunk lc && !(c instanceof EmptyLevelChunk) ? lc : null;
-    }
-
-    private static Biome biomeAt(LevelChunk chunk, int lx, int y, int lz) {
-        LevelChunkSection[] sections = chunk.getSections();
-        if (sections.length == 0) {
-            return null;
+        if (c instanceof LevelChunk lc && !(c instanceof EmptyLevelChunk)) {
+            return lc;
         }
-        int idx = Math.max(0, Math.min(sections.length - 1, (y >> 4) - chunk.getMinSectionY()));
-        LevelChunkSection sec = sections[idx];
-        if (sec == null) {
-            return null;
-        }
-        return sec.getNoiseBiome((lx & 15) >> 2, (y & 15) >> 2, (lz & 15) >> 2).value();
-    }
-
-    private static int sampleBiomeColor(ClientLevel level, LevelChunk centerChunk,
-                                        int worldX, int y, int worldZ, int mode) {
-        int centerCx = centerChunk.getPos().x();
-        int centerCz = centerChunk.getPos().z();
-        int sumR = 0;
-        int sumG = 0;
-        int sumB = 0;
-        int count = 0;
-
-        for (int dz = -2; dz <= 2; dz += 2) {
-            for (int dx = -2; dx <= 2; dx += 2) {
-                int sx = worldX + dx;
-                int sz = worldZ + dz;
-                int scx = sx >> 4;
-                int scz = sz >> 4;
-                LevelChunk target = (scx == centerCx && scz == centerCz)
-                        ? centerChunk
-                        : loadedChunk(level, scx, scz);
-                if (target == null) {
-                    continue;
-                }
-                Biome biome = biomeAt(target, sx & 15, y, sz & 15);
-                if (biome == null) {
-                    continue;
-                }
-                int rgb = switch (mode) {
-                    case BIOME_WATER -> biome.getWaterColor();
-                    case BIOME_GRASS -> biome.getGrassColor(sx, sz);
-                    default -> biome.getFoliageColor();
-                };
-                sumR += (rgb >> 16) & 0xFF;
-                sumG += (rgb >> 8) & 0xFF;
-                sumB += rgb & 0xFF;
-                count++;
-            }
-        }
-        if (count == 0) {
-            return mode == BIOME_WATER ? 0x3F76E4 : 0x6AA84F;
-        }
-        return ((sumR / count) << 16) | ((sumG / count) << 8) | (sumB / count);
+        return null;
     }
 
     private static ChunkColors build(ClientLevel level, LevelChunk chunk, boolean hasCeiling) {
         ChunkColors out = new ChunkColors();
-        int chunkX = chunk.getPos().x();
-        int chunkZ = chunk.getPos().z();
-        int baseX = chunkX * 16;
-        int baseZ = chunkZ * 16;
+        int cx = chunk.getPos().x();
+        int cz = chunk.getPos().z();
+        int baseX = cx * 16;
+        int baseZ = cz * 16;
         int minY = chunk.getMinSectionY() * 16;
         int maxY = (chunk.getMaxSectionY() + 1) * 16 - 1;
 
-        LevelChunk northChunk = loadedChunk(level, chunkX, chunkZ - 1);
-        LevelChunk westChunk = loadedChunk(level, chunkX - 1, chunkZ);
+        LevelChunk northChunk = loadedChunk(level, cx, cz - 1);
+        LevelChunk westChunk = loadedChunk(level, cx - 1, cz);
 
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
-        BlockPos.MutableBlockPos neighborPos = new BlockPos.MutableBlockPos();
         int[] tops = new int[256];
-        int[] floors = new int[256];
+        int[] floorTops = new int[256];
+        boolean[] isWaterArr = new boolean[256];
 
         for (int lz = 0; lz < 16; lz++) {
             for (int lx = 0; lx < 16; lx++) {
                 int index = lz * 16 + lx;
-                int top = findSurfaceY(level, chunk, lx, lz, minY, maxY, hasCeiling, pos);
+                int top = findSurfaceY(level, chunk, lx, lz, baseX, baseZ, minY, maxY, hasCeiling, pos);
                 tops[index] = top;
-                floors[index] = top;
+                floorTops[index] = top;
+                if (top < minY) {
+                    continue;
+                }
+                pos.set(baseX + lx, top, baseZ + lz);
+                BlockState state = chunk.getBlockState(pos);
+                if (state.getFluidState().is(FluidTags.WATER)) {
+                    isWaterArr[index] = true;
+                    floorTops[index] = findWaterFloorY(chunk, baseX + lx, baseZ + lz, top, minY, pos);
+                }
+            }
+        }
+
+        for (int lz = 0; lz < 16; lz++) {
+            for (int lx = 0; lx < 16; lx++) {
+                int index = lz * 16 + lx;
+                int top = tops[index];
                 if (top < minY) {
                     continue;
                 }
@@ -194,82 +157,57 @@ public final class MapCache {
                 pos.set(wx, top, wz);
                 BlockState state = chunk.getBlockState(pos);
 
-                if (state.getFluidState().is(FluidTags.WATER)) {
-                    int waterRgb = sampleBiomeColor(level, chunk, wx, top, wz, BIOME_WATER);
-                    int floorY = top - 1;
-                    BlockState floorState = state;
-                    while (floorY >= minY) {
-                        pos.set(wx, floorY, wz);
-                        BlockState s = chunk.getBlockState(pos);
-                        if (!s.getFluidState().is(FluidTags.WATER) && !s.isAir() && !isUnderwaterPlant(s)) {
-                            floorState = s;
-                            break;
-                        }
-                        floorY--;
-                    }
-                    floors[index] = floorY;
+                if (isWaterArr[index]) {
+                    int floorY = floorTops[index];
                     int depth = Math.max(1, top - floorY);
-                    int floorRgb = floorY >= minY ? blockColor(level, chunk, floorState, pos, wx, floorY, wz) : 0;
-                    if (floorRgb == 0) {
-                        floorRgb = 0x3F4B58;
+                    int waterRgb = blendedBiomeColor(level, chunk, wx, top, wz, 0);
+
+                    int floorRgb;
+                    if (floorY >= minY) {
+                        pos.set(wx, floorY, wz);
+                        BlockState floorState = chunk.getBlockState(pos);
+                        floorRgb = blockColor(level, chunk, floorState, pos);
+                        int northFloor = lz > 0 ? floorTops[(lz - 1) * 16 + lx] : floorY;
+                        int westFloor = lx > 0 ? floorTops[index - 1] : floorY;
+                        int floorRelief = (floorY - northFloor) * 2 + (floorY - westFloor);
+                        double floorShade = 0.94 + Math.tanh(floorRelief * 0.20) * 0.16;
+                        floorRgb = scaleRgb(floorRgb, floorShade);
+                    } else {
+                        floorRgb = scaleRgb(waterRgb, 0.45);
                     }
 
-                    int northFloor = lz > 0 ? floors[(lz - 1) * 16 + lx] : floorY;
-                    int westFloor = lx > 0 ? floors[index - 1] : floorY;
-                    int floorRelief = (floorY - northFloor) * 2 + (floorY - westFloor);
-                    double floorShade = 0.94 + Math.tanh(floorRelief * 0.22) * 0.18;
+                    double clarity = Math.exp(-depth * 0.14);
+                    double depthDarken = 0.62 + 0.38 * Math.exp(-depth * 0.065);
+                    int deepWater = scaleRgb(waterRgb, depthDarken);
+                    int blended = lerpRgb(deepWater, floorRgb, clarity * 0.82);
 
-                    double fr = ((floorRgb >> 16) & 0xFF) * floorShade;
-                    double fg = ((floorRgb >> 8) & 0xFF) * floorShade;
-                    double fb = (floorRgb & 0xFF) * floorShade;
-
-                    double visibility = Math.exp(-depth * 0.145);
-                    double waterMix = 1.0 - visibility;
-                    double depthShade = Math.max(0.54, 1.0 - depth * 0.022);
-
-                    int r = clamp((int) (lerp(fr, (waterRgb >> 16) & 0xFF, waterMix) * depthShade));
-                    int g = clamp((int) (lerp(fg, (waterRgb >> 8) & 0xFF, waterMix) * depthShade));
-                    int b = clamp((int) (lerp(fb, waterRgb & 0xFF, waterMix) * depthShade));
-                    out.px[index] = 0xFF000000 | (r << 16) | (g << 8) | b;
+                    int northTop = neighborSurfaceY(level, chunk, northChunk, lx, lz - 1, baseX, baseZ, minY, maxY, hasCeiling, tops, top, pos);
+                    int westTop = neighborSurfaceY(level, chunk, westChunk, lx - 1, lz, baseX, baseZ, minY, maxY, hasCeiling, tops, top, pos);
+                    int waterRelief = (top - northTop) + (top - westTop);
+                    double waterShade = 1.0 + Math.tanh(waterRelief * 0.15) * 0.08;
+                    int finalRgb = scaleRgb(blended, waterShade);
+                    out.px[index] = 0xFF000000 | finalRgb;
                     continue;
                 }
 
-                int rgb = blockColor(level, chunk, state, pos, wx, top, wz);
+                int rgb = blockColor(level, chunk, state, pos);
                 if (rgb == 0) {
                     continue;
                 }
 
-                int northTop;
-                if (lz > 0) {
-                    northTop = tops[(lz - 1) * 16 + lx];
-                } else if (northChunk != null) {
-                    northTop = findSurfaceY(level, northChunk, lx, 15, minY, maxY, hasCeiling, neighborPos);
-                } else {
-                    northTop = top;
-                }
-
-                int westTop;
-                if (lx > 0) {
-                    westTop = tops[index - 1];
-                } else if (westChunk != null) {
-                    westTop = findSurfaceY(level, westChunk, 15, lz, minY, maxY, hasCeiling, neighborPos);
-                } else {
-                    westTop = top;
-                }
-
+                int northTop = neighborSurfaceY(level, chunk, northChunk, lx, lz - 1, baseX, baseZ, minY, maxY, hasCeiling, tops, top, pos);
+                int westTop = neighborSurfaceY(level, chunk, westChunk, lx - 1, lz, baseX, baseZ, minY, maxY, hasCeiling, tops, top, pos);
                 int relief = (top - northTop) * 2 + (top - westTop);
-                double shade = 0.94 + Math.tanh(relief * 0.28) * 0.26;
-                double alt = Math.max(-0.08, Math.min(0.10, (top - 64) * 0.0014));
-                shade += alt;
-                if (northTop - top >= 3 || westTop - top >= 3) {
-                    shade *= 0.86;
+
+                double shade = 0.93 + Math.tanh(relief * 0.24) * 0.24;
+                if (relief <= -3) {
+                    shade *= 0.92;
                 }
+                double altBoost = Math.max(-0.07, Math.min(0.08, (top - 64) * 0.0012));
+                shade += altBoost;
 
-                int r = clamp((int) (((rgb >> 16) & 0xFF) * shade));
-                int g = clamp((int) (((rgb >> 8) & 0xFF) * shade));
-                int b = clamp((int) ((rgb & 0xFF) * shade));
-
-                out.px[index] = 0xFF000000 | (r << 16) | (g << 8) | b;
+                int shaded = scaleRgb(rgb, shade);
+                out.px[index] = 0xFF000000 | shaded;
             }
         }
 
@@ -277,162 +215,270 @@ public final class MapCache {
         return out;
     }
 
-    private static int findSurfaceY(ClientLevel level, LevelChunk chunk, int lx, int lz,
-                                    int minY, int maxY, boolean hasCeiling, BlockPos.MutableBlockPos pos) {
-        int baseX = chunk.getPos().x() * 16;
-        int baseZ = chunk.getPos().z() * 16;
-        int y = hasCeiling
-                ? netherFloor(chunk, baseX + lx, baseZ + lz, minY, maxY, pos)
-                : Math.min(maxY, chunk.getHeight(Heightmap.Types.WORLD_SURFACE, lx, lz) - 1);
-        int skipped = 0;
-        while (y >= minY && skipped < 3) {
-            pos.set(baseX + lx, y, baseZ + lz);
-            BlockState s = chunk.getBlockState(pos);
-            if (!isSkippableSurface(level, s, pos)) {
-                break;
-            }
-            y--;
-            skipped++;
+    private static int neighborSurfaceY(ClientLevel level, LevelChunk chunk, LevelChunk neighborChunk,
+                                        int nlx, int nlz, int baseX, int baseZ, int minY, int maxY,
+                                        boolean hasCeiling, int[] tops, int fallback,
+                                        BlockPos.MutableBlockPos pos) {
+        if (nlx >= 0 && nlz >= 0) {
+            int y = tops[nlz * 16 + nlx];
+            return y >= minY ? y : fallback;
         }
-        return y;
+        if (neighborChunk == null) {
+            return fallback;
+        }
+        int lx = Math.floorMod(nlx, 16);
+        int lz = Math.floorMod(nlz, 16);
+        int nBaseX = neighborChunk.getPos().x() * 16;
+        int nBaseZ = neighborChunk.getPos().z() * 16;
+        int y = findSurfaceY(level, neighborChunk, lx, lz, nBaseX, nBaseZ, minY, maxY, hasCeiling, pos);
+        return y >= minY ? y : fallback;
     }
 
-    private static boolean isSkippableSurface(ClientLevel level, BlockState state, BlockPos pos) {
+    private static int findSurfaceY(ClientLevel level, LevelChunk chunk, int lx, int lz,
+                                    int baseX, int baseZ, int minY, int maxY,
+                                    boolean hasCeiling, BlockPos.MutableBlockPos pos) {
+        int y = hasCeiling
+                ? netherFloor(chunk, baseX + lx, baseZ + lz, minY, maxY, pos)
+                : Math.min(maxY, chunk.getHeight(Heightmap.Types.WORLD_SURFACE, lx, lz));
+        int wx = baseX + lx;
+        int wz = baseZ + lz;
+        while (y >= minY) {
+            pos.set(wx, y, wz);
+            BlockState state = chunk.getBlockState(pos);
+            if (!shouldSkipSurfaceBlock(level, state, pos)) {
+                return y;
+            }
+            y--;
+        }
+        return minY - 1;
+    }
+
+    private static boolean shouldSkipSurfaceBlock(ClientLevel level, BlockState state, BlockPos pos) {
+        if (state.isAir()) {
+            return true;
+        }
         if (!state.getFluidState().isEmpty()) {
             return false;
         }
-        if (state.isAir() || state.is(Blocks.BARRIER) || state.getMapColor(level, pos) == MapColor.NONE) {
+        Block block = state.getBlock();
+        if (block == Blocks.BARRIER || block == Blocks.LIGHT || block == Blocks.STRUCTURE_VOID) {
             return true;
         }
-        if (state.is(BlockTags.FLOWERS) || state.is(BlockTags.RAILS)) {
+        if (block == Blocks.SHORT_GRASS || block == Blocks.TALL_GRASS
+                || block == Blocks.FERN || block == Blocks.LARGE_FERN
+                || block == Blocks.DEAD_BUSH || block == Blocks.VINE
+                || block == Blocks.GLOW_LICHEN || block == Blocks.COBWEB
+                || block == Blocks.TORCH || block == Blocks.WALL_TORCH
+                || block == Blocks.SOUL_TORCH || block == Blocks.SOUL_WALL_TORCH
+                || block == Blocks.REDSTONE_TORCH || block == Blocks.REDSTONE_WALL_TORCH
+                || block == Blocks.REDSTONE_WIRE || block == Blocks.TRIPWIRE
+                || block == Blocks.TRIPWIRE_HOOK || block == Blocks.STRING
+                || block == Blocks.BROWN_MUSHROOM || block == Blocks.RED_MUSHROOM
+                || block == Blocks.CRIMSON_FUNGUS || block == Blocks.WARPED_FUNGUS
+                || block == Blocks.CRIMSON_ROOTS || block == Blocks.WARPED_ROOTS
+                || block == Blocks.NETHER_SPROUTS || block == Blocks.SEAGRASS
+                || block == Blocks.TALL_SEAGRASS || block == Blocks.KELP
+                || block == Blocks.KELP_PLANT || block == Blocks.SUGAR_CANE
+                || block == Blocks.BAMBOO_SAPLING || block == Blocks.PINK_PETALS
+                || block == Blocks.LEAF_LITTER || block == Blocks.WILDFLOWERS) {
             return true;
         }
-        return state.is(Blocks.SHORT_GRASS)
-                || state.is(Blocks.TALL_GRASS)
-                || state.is(Blocks.FERN)
-                || state.is(Blocks.LARGE_FERN)
-                || state.is(Blocks.DEAD_BUSH)
-                || state.is(Blocks.COBWEB)
-                || state.is(Blocks.TORCH)
-                || state.is(Blocks.WALL_TORCH)
-                || state.is(Blocks.SOUL_TORCH)
-                || state.is(Blocks.SOUL_WALL_TORCH)
-                || state.is(Blocks.REDSTONE_TORCH)
-                || state.is(Blocks.REDSTONE_WALL_TORCH);
+        if (state.is(BlockTags.FLOWERS) || state.is(BlockTags.RAILS) || state.is(BlockTags.SAPLINGS)) {
+            return true;
+        }
+        return state.getMapColor(level, pos) == MapColor.NONE;
     }
 
-    private static boolean isUnderwaterPlant(BlockState state) {
-        return state.is(Blocks.SEAGRASS)
-                || state.is(Blocks.TALL_SEAGRASS)
-                || state.is(Blocks.KELP)
-                || state.is(Blocks.KELP_PLANT);
+    private static int findWaterFloorY(LevelChunk chunk, int wx, int wz, int surfaceY, int minY,
+                                       BlockPos.MutableBlockPos pos) {
+        int y = surfaceY - 1;
+        while (y >= minY) {
+            pos.set(wx, y, wz);
+            BlockState s = chunk.getBlockState(pos);
+            if (!s.isAir() && !s.getFluidState().is(FluidTags.WATER)) {
+                Block b = s.getBlock();
+                if (b != Blocks.SEAGRASS && b != Blocks.TALL_SEAGRASS
+                        && b != Blocks.KELP && b != Blocks.KELP_PLANT
+                        && b != Blocks.BUBBLE_COLUMN) {
+                    return y;
+                }
+            }
+            y--;
+        }
+        return minY - 1;
     }
 
-    private static int blockColor(ClientLevel level, LevelChunk chunk, BlockState state,
-                                  BlockPos pos, int wx, int y, int wz) {
-        Block b = state.getBlock();
-        if (b == Blocks.GRASS_BLOCK || b == Blocks.SHORT_GRASS || b == Blocks.TALL_GRASS
-                || b == Blocks.FERN || b == Blocks.LARGE_FERN || b == Blocks.SUGAR_CANE) {
-            return sampleBiomeColor(level, chunk, wx, y, wz, BIOME_GRASS);
+    private static int blockColor(ClientLevel level, LevelChunk chunk, BlockState state, BlockPos pos) {
+        Block block = state.getBlock();
+        if (block == Blocks.GRASS_BLOCK || block == Blocks.SHORT_GRASS || block == Blocks.TALL_GRASS
+                || block == Blocks.FERN || block == Blocks.LARGE_FERN || block == Blocks.SUGAR_CANE) {
+            return blendedBiomeColor(level, chunk, pos.getX(), pos.getY(), pos.getZ(), 1);
         }
-        if (state.is(BlockTags.LEAVES)) {
-            if (b == Blocks.CHERRY_LEAVES) {
-                return 0xE5A5BE;
-            }
-            if (b == Blocks.PALE_OAK_LEAVES) {
-                return 0x767E73;
-            }
-            if (b == Blocks.SPRUCE_LEAVES) {
-                return 0x436E43;
-            }
-            if (b == Blocks.BIRCH_LEAVES) {
-                return 0x6E9444;
-            }
-            return scaleRgb(sampleBiomeColor(level, chunk, wx, y, wz, BIOME_FOLIAGE), 0.80);
+        if (block == Blocks.SPRUCE_LEAVES) {
+            return 0x4E7A4E;
         }
-        if (b == Blocks.VINE) {
-            return scaleRgb(sampleBiomeColor(level, chunk, wx, y, wz, BIOME_FOLIAGE), 0.80);
+        if (block == Blocks.BIRCH_LEAVES) {
+            return 0x6A8E46;
         }
-        if (b == Blocks.PODZOL) return 0x6D4F2E;
-        if (b == Blocks.DIRT) return 0x866043;
-        if (b == Blocks.COARSE_DIRT) return 0x76543A;
-        if (b == Blocks.ROOTED_DIRT) return 0x8A6548;
-        if (b == Blocks.DIRT_PATH) return 0x9B8249;
-        if (b == Blocks.FARMLAND) return 0x633E22;
-        if (b == Blocks.MUD) return 0x3C383B;
-        if (b == Blocks.CLAY) return 0x9EA5B2;
-        if (b == Blocks.MYCELIUM) return 0x6E6265;
-        if (b == Blocks.MOSS_BLOCK) return 0x5A6E2D;
-        if (b == Blocks.STONE) return 0x7E7E7E;
-        if (b == Blocks.COBBLESTONE) return 0x6F6F6F;
-        if (b == Blocks.MOSSY_COBBLESTONE) return 0x64725A;
-        if (b == Blocks.ANDESITE) return 0x888888;
-        if (b == Blocks.GRANITE) return 0x956755;
-        if (b == Blocks.DIORITE) return 0xC6C6C6;
-        if (b == Blocks.GRAVEL) return 0x857F7F;
-        if (b == Blocks.DEEPSLATE) return 0x505052;
-        if (b == Blocks.COBBLED_DEEPSLATE) return 0x4C4C50;
-        if (b == Blocks.TUFF) return 0x6C6D66;
-        if (b == Blocks.CALCITE) return 0xE0E0DC;
-        if (b == Blocks.DRIPSTONE_BLOCK) return 0x866B5C;
-        if (b == Blocks.SAND) return 0xDCD3A1;
-        if (b == Blocks.RED_SAND) return 0xBF6721;
-        if (b == Blocks.SANDSTONE) return 0xD8CB9A;
-        if (b == Blocks.RED_SANDSTONE) return 0xB66220;
-        if (b == Blocks.SNOW || b == Blocks.SNOW_BLOCK || b == Blocks.POWDER_SNOW) return 0xF2FBF9;
-        if (b == Blocks.ICE) return 0x91B7FD;
-        if (b == Blocks.PACKED_ICE) return 0x8DB4FA;
-        if (b == Blocks.BLUE_ICE) return 0x74A7FD;
-        if (b == Blocks.OAK_LOG) return 0x6D5533;
-        if (b == Blocks.SPRUCE_LOG) return 0x3B2611;
-        if (b == Blocks.BIRCH_LOG) return 0xD8D6D1;
-        if (b == Blocks.JUNGLE_LOG) return 0x554319;
-        if (b == Blocks.ACACIA_LOG) return 0x676056;
-        if (b == Blocks.DARK_OAK_LOG) return 0x3C2E1B;
-        if (b == Blocks.MANGROVE_LOG) return 0x544329;
-        if (b == Blocks.CHERRY_LOG) return 0x37222B;
-        if (b == Blocks.OAK_PLANKS) return 0xA2824E;
-        if (b == Blocks.SPRUCE_PLANKS) return 0x725430;
-        if (b == Blocks.BIRCH_PLANKS) return 0xC0AF79;
-        if (b == Blocks.JUNGLE_PLANKS) return 0xA07350;
-        if (b == Blocks.ACACIA_PLANKS) return 0xA85A32;
-        if (b == Blocks.DARK_OAK_PLANKS) return 0x422B14;
-        if (b == Blocks.MANGROVE_PLANKS) return 0x753630;
-        if (b == Blocks.CHERRY_PLANKS) return 0xE2B2AC;
-        if (b == Blocks.WHEAT) return 0xA8B038;
-        if (b == Blocks.CARROTS) return 0x4A8C2A;
-        if (b == Blocks.POTATOES) return 0x4E942E;
-        if (b == Blocks.BEETROOTS) return 0x568C32;
-        if (b == Blocks.HAY_BLOCK) return 0xB89828;
-        if (b == Blocks.PUMPKIN) return 0xC87418;
-        if (b == Blocks.MELON) return 0x769422;
-        if (b == Blocks.CACTUS) return 0x56822A;
-        if (b == Blocks.LILY_PAD) return 0x3D6E2A;
-        if (b == Blocks.NETHERRACK) return 0x632727;
-        if (b == Blocks.CRIMSON_NYLIUM) return 0x832020;
-        if (b == Blocks.WARPED_NYLIUM) return 0x2B7265;
-        if (b == Blocks.SOUL_SAND) return 0x513E32;
-        if (b == Blocks.SOUL_SOIL) return 0x4B392E;
-        if (b == Blocks.BASALT) return 0x49484D;
-        if (b == Blocks.BLACKSTONE) return 0x2A242B;
-        if (b == Blocks.MAGMA_BLOCK) return 0x8E3F1F;
-        if (b == Blocks.GLOWSTONE) return 0xC99E57;
-        if (b == Blocks.END_STONE) return 0xDBDE9E;
-        if (b == Blocks.OBSIDIAN) return 0x14121D;
-        if (b == Blocks.LAVA) return 0xD85E14;
-
+        if (block == Blocks.CHERRY_LEAVES) {
+            return 0xE5A3BE;
+        }
+        if (block == Blocks.AZALEA_LEAVES) {
+            return 0x5B7B34;
+        }
+        if (block == Blocks.FLOWERING_AZALEA_LEAVES) {
+            return 0x7A7352;
+        }
+        if (block == Blocks.PALE_OAK_LEAVES) {
+            return 0x76827B;
+        }
+        if (state.is(BlockTags.LEAVES) || block == Blocks.VINE) {
+            int foliage = blendedBiomeColor(level, chunk, pos.getX(), pos.getY(), pos.getZ(), 2);
+            return scaleRgb(foliage, 0.84);
+        }
+        Integer curated = BLOCK_PALETTE.get(block);
+        if (curated != null) {
+            return curated;
+        }
         return state.getMapColor(level, pos).col;
     }
 
+    private static int blendedBiomeColor(ClientLevel level, LevelChunk originChunk, int wx, int wy, int wz, int mode) {
+        int rSum = 0;
+        int gSum = 0;
+        int bSum = 0;
+        int count = 0;
+        int originCx = originChunk.getPos().x();
+        int originCz = originChunk.getPos().z();
+
+        for (int dz = -2; dz <= 2; dz += 2) {
+            int sz = wz + dz;
+            int scz = sz >> 4;
+            for (int dx = -2; dx <= 2; dx += 2) {
+                int sx = wx + dx;
+                int scx = sx >> 4;
+                LevelChunk target = (scx == originCx && scz == originCz)
+                        ? originChunk
+                        : loadedChunk(level, scx, scz);
+                if (target == null) {
+                    continue;
+                }
+                Biome biome = sampleBiome(target, sx & 15, wy, sz & 15);
+                if (biome == null) {
+                    continue;
+                }
+                int col = switch (mode) {
+                    case 0 -> biome.getWaterColor();
+                    case 1 -> biome.getGrassColor(sx, sz);
+                    default -> biome.getFoliageColor();
+                };
+                rSum += (col >> 16) & 0xFF;
+                gSum += (col >> 8) & 0xFF;
+                bSum += col & 0xFF;
+                count++;
+            }
+        }
+        if (count == 0) {
+            return mode == 0 ? 0x3F76E4 : 0x79C05A;
+        }
+        return ((rSum / count) << 16) | ((gSum / count) << 8) | (bSum / count);
+    }
+
+    private static Biome sampleBiome(LevelChunk chunk, int lx, int wy, int lz) {
+        int idx = chunk.getSectionIndex(wy);
+        if (idx < 0 || idx >= chunk.getSectionsCount()) {
+            idx = Math.max(0, Math.min(chunk.getSectionsCount() - 1, idx));
+        }
+        LevelChunkSection section = chunk.getSection(idx);
+        Holder<Biome> holder = section.getNoiseBiome((lx >> 2) & 3, (wy >> 2) & 3, (lz >> 2) & 3);
+        return holder == null ? null : holder.value();
+    }
+
     private static int scaleRgb(int rgb, double factor) {
-        int r = clamp((int) (((rgb >> 16) & 0xFF) * factor));
-        int g = clamp((int) (((rgb >> 8) & 0xFF) * factor));
-        int b = clamp((int) ((rgb & 0xFF) * factor));
+        int r = clamp((int) Math.round(((rgb >> 16) & 0xFF) * factor));
+        int g = clamp((int) Math.round(((rgb >> 8) & 0xFF) * factor));
+        int b = clamp((int) Math.round((rgb & 0xFF) * factor));
         return (r << 16) | (g << 8) | b;
     }
 
-    private static double lerp(double a, double b, double t) {
-        return a + (b - a) * t;
+    private static int lerpRgb(int a, int b, double t) {
+        double ct = Math.max(0.0, Math.min(1.0, t));
+        int ar = (a >> 16) & 0xFF;
+        int ag = (a >> 8) & 0xFF;
+        int ab = a & 0xFF;
+        int br = (b >> 16) & 0xFF;
+        int bg = (b >> 8) & 0xFF;
+        int bb = b & 0xFF;
+        int r = clamp((int) Math.round(ar + (br - ar) * ct));
+        int g = clamp((int) Math.round(ag + (bg - ag) * ct));
+        int bl = clamp((int) Math.round(ab + (bb - ab) * ct));
+        return (r << 16) | (g << 8) | bl;
+    }
+
+    private static Map<Block, Integer> buildPalette() {
+        Map<Block, Integer> m = new IdentityHashMap<>();
+        m.put(Blocks.DIRT, 0x866043);
+        m.put(Blocks.COARSE_DIRT, 0x77553B);
+        m.put(Blocks.ROOTED_DIRT, 0x90674C);
+        m.put(Blocks.DIRT_PATH, 0x947941);
+        m.put(Blocks.FARMLAND, 0x5B3920);
+        m.put(Blocks.PODZOL, 0x5A3E1B);
+        m.put(Blocks.MYCELIUM, 0x6F6265);
+        m.put(Blocks.MUD, 0x3C393C);
+        m.put(Blocks.SAND, 0xDBD3A0);
+        m.put(Blocks.RED_SAND, 0xBE6621);
+        m.put(Blocks.SANDSTONE, 0xD8CB9B);
+        m.put(Blocks.RED_SANDSTONE, 0xBA631D);
+        m.put(Blocks.GRAVEL, 0x837F7E);
+        m.put(Blocks.CLAY, 0xA0A6B3);
+        m.put(Blocks.STONE, 0x7D7D7D);
+        m.put(Blocks.COBBLESTONE, 0x7A7A7A);
+        m.put(Blocks.MOSSY_COBBLESTONE, 0x6E7A5E);
+        m.put(Blocks.STONE_BRICKS, 0x7A7A7A);
+        m.put(Blocks.ANDESITE, 0x888888);
+        m.put(Blocks.DIORITE, 0xBCBCBC);
+        m.put(Blocks.GRANITE, 0x956755);
+        m.put(Blocks.DEEPSLATE, 0x505052);
+        m.put(Blocks.TUFF, 0x6C6D66);
+        m.put(Blocks.CALCITE, 0xDFE0DC);
+        m.put(Blocks.TERRACOTTA, 0x985E43);
+        m.put(Blocks.SNOW, 0xF0F6F6);
+        m.put(Blocks.SNOW_BLOCK, 0xF0F6F6);
+        m.put(Blocks.POWDER_SNOW, 0xECF4F5);
+        m.put(Blocks.ICE, 0x91B8FE);
+        m.put(Blocks.PACKED_ICE, 0x8DB4FA);
+        m.put(Blocks.BLUE_ICE, 0x74A7FD);
+        m.put(Blocks.OAK_PLANKS, 0xA2824E);
+        m.put(Blocks.SPRUCE_PLANKS, 0x725430);
+        m.put(Blocks.BIRCH_PLANKS, 0xC0AF79);
+        m.put(Blocks.JUNGLE_PLANKS, 0xA07350);
+        m.put(Blocks.ACACIA_PLANKS, 0xA85A32);
+        m.put(Blocks.DARK_OAK_PLANKS, 0x422B14);
+        m.put(Blocks.MANGROVE_PLANKS, 0x753630);
+        m.put(Blocks.CHERRY_PLANKS, 0xE2B2AC);
+        m.put(Blocks.BAMBOO_PLANKS, 0xC1AD50);
+        m.put(Blocks.OAK_LOG, 0x6D5533);
+        m.put(Blocks.SPRUCE_LOG, 0x3A2510);
+        m.put(Blocks.BIRCH_LOG, 0xD7D3CB);
+        m.put(Blocks.JUNGLE_LOG, 0x554319);
+        m.put(Blocks.ACACIA_LOG, 0x676056);
+        m.put(Blocks.DARK_OAK_LOG, 0x3C2E1A);
+        m.put(Blocks.LAVA, 0xD96514);
+        m.put(Blocks.OBSIDIAN, 0x15121E);
+        m.put(Blocks.NETHERRACK, 0x612626);
+        m.put(Blocks.SOUL_SAND, 0x513E32);
+        m.put(Blocks.SOUL_SOIL, 0x4B392E);
+        m.put(Blocks.BASALT, 0x4A4A4F);
+        m.put(Blocks.BLACKSTONE, 0x2A2429);
+        m.put(Blocks.CRIMSON_NYLIUM, 0x821F1F);
+        m.put(Blocks.WARPED_NYLIUM, 0x2B7265);
+        m.put(Blocks.END_STONE, 0xDBDE9E);
+        m.put(Blocks.MOSS_BLOCK, 0x596D2D);
+        m.put(Blocks.WHEAT, 0xC2A33E);
+        m.put(Blocks.CARROTS, 0x568A29);
+        m.put(Blocks.POTATOES, 0x5A912C);
+        m.put(Blocks.BEETROOTS, 0x4E8328);
+        return m;
     }
 
     private static void finishDerived(ChunkColors out) {
