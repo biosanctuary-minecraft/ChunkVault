@@ -85,6 +85,8 @@ public class MapScreen extends Screen {
 
     private int areaBarY0;
     private int areaBarY1;
+    private int abCoordsX0;
+    private int abCoordsX1;
     private int abRedrawX0;
     private int abRedrawX1;
     private int abClipX0;
@@ -156,6 +158,18 @@ public class MapScreen extends Screen {
         focusZ = z;
         focusUntil = System.currentTimeMillis() + 3000;
         showPins = true;
+    }
+
+    void onAreaInputApplied() {
+        selectingArea = false;
+        draggingArea = false;
+        areaPanelOpen = true;
+        trimConfirmUntil = 0;
+        if (AreaPlan.isActive()) {
+            centerX = (AreaPlan.minCx() + AreaPlan.maxCx() + 1) * 8.0;
+            centerZ = (AreaPlan.minCz() + AreaPlan.maxCz() + 1) * 8.0;
+            showToast(Lang.s("area.set_toast", AreaPlan.totalChunks()));
+        }
     }
 
     private int screenToChunkX(double mouseX) {
@@ -703,6 +717,8 @@ public class MapScreen extends Screen {
         g.fill(0, areaBarY0, this.width, areaBarY1, 0xE814161C);
         g.fill(0, areaBarY1 - 1, this.width, areaBarY1, 0xFF3A3A48);
 
+        abCoordsX0 = 0;
+        abCoordsX1 = 0;
         abRedrawX0 = 0;
         abRedrawX1 = 0;
         abClipX0 = 0;
@@ -717,18 +733,31 @@ public class MapScreen extends Screen {
         abClearX1 = 0;
 
         int cy = areaBarY0 + 6;
+        int by0 = areaBarY0 + 2;
+        int by1 = areaBarY1 - 3;
+
         if (selectingArea) {
-            g.text(this.font, Lang.s("area.select_hint"), 8, cy, 0xFF38D8FF, true);
             String cancelLabel = Lang.s("common.cancel");
             abClearX1 = this.width - 8;
-            abClearX0 = abClearX1 - this.font.width(cancelLabel) - 12;
-            drawMiniButton(g, abClearX0, abClearX1, areaBarY0 + 2, areaBarY1 - 3, cancelLabel,
+            abClearX0 = abClearX1 - this.font.width(cancelLabel) - 10;
+            drawMiniButton(g, abClearX0, abClearX1, by0, by1, cancelLabel,
                     0xFF5A2A2A, 0xFF7A3838, mouseX, mouseY);
+
+            String coordsLabel = Lang.s("area.btn_coords");
+            abCoordsX1 = abClearX0 - 4;
+            abCoordsX0 = abCoordsX1 - this.font.width(coordsLabel) - 10;
+            drawMiniButton(g, abCoordsX0, abCoordsX1, by0, by1, coordsLabel,
+                    0xFF1F6A7A, 0xFF2B8AA0, mouseX, mouseY);
+
+            String hint = Lang.s("area.select_hint");
+            if (this.font.width(hint) <= abCoordsX0 - 14) {
+                g.text(this.font, hint, 8, cy, 0xFF38D8FF, true);
+            } else {
+                g.text(this.font, Lang.s("area.select_hint_short"), 8, cy, 0xFF38D8FF, true);
+            }
             return;
         }
 
-        int by0 = areaBarY0 + 2;
-        int by1 = areaBarY1 - 3;
         int rx = this.width - 8;
 
         String clearTxt = Lang.s("area.btn_clear");
@@ -1152,6 +1181,10 @@ public class MapScreen extends Screen {
         if (event.button() == InputConstants.MOUSE_BUTTON_LEFT && areaBarY1 > areaBarY0
                 && my >= areaBarY0 && my < areaBarY1) {
             if (selectingArea) {
+                if (abCoordsX1 > abCoordsX0 && mx >= abCoordsX0 && mx < abCoordsX1) {
+                    Minecraft.getInstance().setScreenAndShow(new AreaInputScreen(this));
+                    return true;
+                }
                 if (mx >= abClearX0 && mx < abClearX1) {
                     selectingArea = false;
                     draggingArea = false;
