@@ -4,7 +4,6 @@ import com.chunkvault.state.ChunkVaultSettings;
 import net.minecraft.SharedConstants;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.IntArrayTag;
 import net.minecraft.nbt.ListTag;
@@ -18,9 +17,7 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.storage.TagValueOutput;
 
-import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
-import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -41,7 +38,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class WorldSaveManager {
 
     private record EntityRecord(String entitiesFolder, int chunkX, int chunkZ, CompoundTag tag) {}
-    private record ContainerSnapshot(String typeId, CompoundTag tag) {}
 
     private final Path rootDir;
     private final Path gameDir;
@@ -49,7 +45,6 @@ public final class WorldSaveManager {
     private final Map<String, SimpleRegionFile> openRegions = new HashMap<>();
     private final Set<String> recordedChunks = ConcurrentHashMap.newKeySet();
     private final Map<UUID, EntityRecord> entityRecords = new ConcurrentHashMap<>();
-    private final Map<String, ContainerSnapshot> containers = new ConcurrentHashMap<>();
     private final ExecutorService ioExecutor = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "chunkvault-io");
         t.setDaemon(true);
@@ -92,78 +87,15 @@ public final class WorldSaveManager {
         } catch (IOException e) {
             System.err.println("[ChunkVault] Failed to create save directory " + rootDir + ": " + e);
         }
-        loadContainers();
-    }
-
-    private static String containerKey(Level level, BlockPos pos) {
-        return level.dimension().identifier() + "|" + pos.getX() + "|" + pos.getY() + "|" + pos.getZ();
-    }
-
-    private static String typeIdOf(BlockEntity be) {
-        return String.valueOf(BuiltInRegistries.BLOCK.getKey(be.getBlockState().getBlock()));
+        ContainerDatabase.ensureLoaded(rootDir);
     }
 
     public void rememberContainer(ClientLevel level, BlockEntity be) {
-        try {
-            CompoundTag tag = be.saveWithFullMetadata(level.registryAccess());
-            containers.put(containerKey(level, be.getBlockPos()), new ContainerSnapshot(typeIdOf(be), tag));
-            if (!closed) {
-                try {
-                    ioExecutor.execute(this::saveContainers);
-                } catch (RejectedExecutionException ignored) {
-                }
-            }
-        } catch (Throwable t) {
-            System.err.println("[ChunkVault] Failed to cache container at " + be.getBlockPos() + ": " + t);
-        }
+        ContainerDatabase.put(level, be);
     }
 
     private CompoundTag containerOverride(ClientLevel level, BlockPos pos, BlockEntity be) {
-        ContainerSnapshot snapshot = containers.get(containerKey(level, pos));
-        if (snapshot == null || !snapshot.typeId().equals(typeIdOf(be))) {
-            return null;
-        }
-        return snapshot.tag().copy();
-    }
-
-    private void saveContainers() {
-        try {
-            CompoundTag root = new CompoundTag();
-            for (Map.Entry<String, ContainerSnapshot> e : containers.entrySet()) {
-                CompoundTag entry = new CompoundTag();
-                entry.putString("type", e.getValue().typeId());
-                entry.put("data", e.getValue().tag());
-                root.put(e.getKey(), entry);
-            }
-            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-            NbtIo.write(root, new DataOutputStream(bytes));
-            Files.write(rootDir.resolve("chunkvault_containers.dat"), bytes.toByteArray());
-        } catch (Exception e) {
-            System.err.println("[ChunkVault] Failed to write chunkvault_containers.dat: " + e);
-        }
-    }
-
-    private void loadContainers() {
-        Path file = rootDir.resolve("chunkvault_containers.dat");
-        if (!Files.isRegularFile(file)) {
-            return;
-        }
-        try (DataInputStream dis = new DataInputStream(new BufferedInputStream(Files.newInputStream(file)))) {
-            CompoundTag root = NbtIo.read(dis);
-            for (String key : root.keySet()) {
-                CompoundTag entry = root.getCompound(key).orElse(null);
-                if (entry == null) {
-                    continue;
-                }
-                String type = entry.getString("type").orElse("");
-                CompoundTag data = entry.getCompound("data").orElse(null);
-                if (data != null && !type.isEmpty()) {
-                    containers.put(key, new ContainerSnapshot(type, data));
-                }
-            }
-        } catch (Exception e) {
-            System.err.println("[ChunkVault] Failed to read chunkvault_containers.dat: " + e);
-        }
+        return ContainerDatabase.overrideFor(level, pos, be);
     }
 
     private static String regionFolderFor(Level level) {
@@ -294,6 +226,6 @@ public final class WorldSaveManager {
         if (playerTag != null && uuid != null) {
             PlayerDataWriter.writeToWorld(rootDir, uuid, playerTag);
         }
-        LevelDatWriter.write(rootDir, gameDir, levelName, spawnPos, uuid);
+        LevelDatWriter.write(rootDir, gameDir, levelName, spawnPos, playerTag);
     }
 }
