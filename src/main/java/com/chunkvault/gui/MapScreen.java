@@ -14,6 +14,8 @@ import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.chunk.EmptyLevelChunk;
 import net.minecraft.world.level.chunk.LevelChunk;
 
@@ -34,8 +36,9 @@ public class MapScreen extends Screen {
 
     private static double lastScale = 1.0;
     private static boolean showPins = true;
+    private static ItemStack chestIcon;
 
-    private record PinGroup(ContainerDatabase.ContainerEntry top, int count) {}
+    private record PinGroup(ContainerDatabase.ContainerEntry top, int count, int sx, int sy) {}
 
     private double centerX;
     private double centerZ;
@@ -63,14 +66,17 @@ public class MapScreen extends Screen {
     private int expX1;
     private int dbX0;
     private int dbX1;
-    private int pinsX0;
-    private int pinsX1;
     private int areaX0;
     private int areaX1;
     private int setX0;
     private int setX1;
     private String toast;
     private long toastUntil;
+
+    private int pinBtnX0;
+    private int pinBtnY0;
+    private int pinBtnX1;
+    private int pinBtnY1;
 
     private int areaBarY0;
     private int areaBarY1;
@@ -111,6 +117,13 @@ public class MapScreen extends Screen {
     public MapScreen() {
         super(Lang.c("map.title"));
         recenterOnPlayer();
+    }
+
+    private static ItemStack chestButtonIcon() {
+        if (chestIcon == null) {
+            chestIcon = new ItemStack(Items.CHEST);
+        }
+        return chestIcon;
     }
 
     private void recenterOnPlayer() {
@@ -173,8 +186,16 @@ public class MapScreen extends Screen {
         var cache = ProjectMap.forDimension(dimensionId);
         boolean hasProject = ProjectMap.isOpen();
         boolean showAreaBar = hasProject && (selectingArea || AreaPlan.isActive());
+
+        pinBtnX1 = hasProject ? this.width - 8 : 0;
+        pinBtnX0 = hasProject ? pinBtnX1 - 22 : 0;
+        pinBtnY1 = hasProject ? this.height - BOTTOM_BAR - 8 : 0;
+        pinBtnY0 = hasProject ? pinBtnY1 - 22 : 0;
+
+        boolean overPinBtn = hasProject && mouseX >= pinBtnX0 && mouseX < pinBtnX1
+                && mouseY >= pinBtnY0 && mouseY < pinBtnY1;
         boolean inAreaBar = showAreaBar && mouseY >= areaBarY0 && mouseY < areaBarY1;
-        boolean inMap = mouseY >= mapY0 && mouseY < mapY1 && !inAreaBar;
+        boolean inMap = mouseY >= mapY0 && mouseY < mapY1 && !inAreaBar && !overPinBtn;
 
         dev = Math.max(1.0, (double) mc.getWindow().getWidth() / (double) this.width);
         clipX0 = (int) Math.round(mapX0 * dev);
@@ -385,6 +406,10 @@ public class MapScreen extends Screen {
 
         g.disableScissor();
 
+        if (hasProject) {
+            drawPinToggleIcon(g, overPinBtn);
+        }
+
         g.fill(0, 0, this.width, TOP_BAR, 0xFF1A1A22);
         g.fill(0, this.height - BOTTOM_BAR, this.width, this.height, 0xFF1A1A22);
 
@@ -395,27 +420,29 @@ public class MapScreen extends Screen {
         x += this.font.width("—") + 6;
         String projectLabel = hasProject ? ProjectMap.name() : Lang.s("map.no_project");
         g.text(this.font, projectLabel, x, 7, hasProject ? 0xFFFFD070 : 0xFF909090, true);
-        x += this.font.width(projectLabel) + 14;
+        x += this.font.width(projectLabel) + 12;
 
         btnY0 = 3;
         btnY1 = TOP_BAR - 3;
 
         newX0 = x;
         newX1 = drawTopButton(g, newX0, Lang.s("button.new_file"), 0xFF2E8B4E, 0xFF3FB365, mouseX, mouseY);
-        expX0 = newX1 + 6;
+        expX0 = newX1 + 5;
         expX1 = drawTopButton(g, expX0, Lang.s("button.open"), 0xFFB8901A, 0xFFD9AE2C, mouseX, mouseY);
         int endX = expX1;
 
+        boolean hoverDbBtn = false;
         if (hasProject) {
-            btnX0 = endX + 6;
+            btnX0 = endX + 5;
             btnX1 = drawTopButton(g, btnX0, recording ? Lang.s("button.stop") : Lang.s("button.record"),
                     recording ? 0xFF7A2020 : 0xFFB03030, recording ? 0xFF9E2C2C : 0xFFD84848, mouseX, mouseY);
-            dbX0 = btnX1 + 6;
-            dbX1 = drawTopButton(g, dbX0, Lang.s("button.chests"), 0xFF7A5618, 0xFF9E7022, mouseX, mouseY);
-            pinsX0 = dbX1 + 6;
-            pinsX1 = drawTopButton(g, pinsX0, showPins ? Lang.s("button.pins_on") : Lang.s("button.pins_off"),
-                    showPins ? 0xFF345E4A : 0xFF3A3D4A, showPins ? 0xFF477D63 : 0xFF505566, mouseX, mouseY);
-            areaX0 = pinsX1 + 6;
+            dbX0 = btnX1 + 5;
+            dbX1 = dbX0 + 22;
+            hoverDbBtn = mouseX >= dbX0 && mouseX < dbX1 && mouseY >= btnY0 && mouseY < btnY1;
+            g.fill(dbX0, btnY0, dbX1, btnY1, 0xFFFFFFFF);
+            g.fill(dbX0 + 1, btnY0 + 1, dbX1 - 1, btnY1 - 1, hoverDbBtn ? 0xFF9E7022 : 0xFF7A5618);
+            g.item(chestButtonIcon(), dbX0 + 3, btnY0);
+            areaX0 = dbX1 + 5;
             boolean areaHighlighted = selectingArea || AreaPlan.isActive();
             areaX1 = drawTopButton(g, areaX0, Lang.s("button.area"),
                     areaHighlighted ? 0xFF1F7A8C : 0xFF3A4B5C, areaHighlighted ? 0xFF2A9BB0 : 0xFF4E647A, mouseX, mouseY);
@@ -425,13 +452,11 @@ public class MapScreen extends Screen {
             btnX1 = 0;
             dbX0 = 0;
             dbX1 = 0;
-            pinsX0 = 0;
-            pinsX1 = 0;
             areaX0 = 0;
             areaX1 = 0;
         }
 
-        setX0 = endX + 6;
+        setX0 = endX + 5;
         setX1 = drawTopButton(g, setX0, Lang.s("button.settings"), 0xFF4E5F82, 0xFF6B7FA8, mouseX, mouseY);
 
         String status;
@@ -439,6 +464,9 @@ public class MapScreen extends Screen {
         if (recording) {
             status = Lang.s("map.status.recording", manager.chunksSaved(), manager.entitiesSeen());
             statusColor = 0xFFFF7070;
+            if (this.width - this.font.width(status) - 8 <= setX1 + 8) {
+                status = "● " + manager.chunksSaved() + " / " + manager.entitiesSeen();
+            }
         } else if (hasProject) {
             status = Lang.s("map.status.idle");
             statusColor = 0xFF909090;
@@ -447,7 +475,7 @@ public class MapScreen extends Screen {
             statusColor = 0;
         }
         int statusX = this.width - this.font.width(status) - 8;
-        if (!status.isEmpty() && statusX > setX1 + 12) {
+        if (!status.isEmpty() && statusX > setX1 + 6) {
             g.text(this.font, status, statusX, 7, statusColor, true);
         }
 
@@ -482,8 +510,62 @@ public class MapScreen extends Screen {
             g.text(this.font, toast, tx0 + 8, toastY + 5, 0xFF70FF90, true);
         }
 
-        if (hoveredPin != null) {
+        if (hoverDbBtn) {
+            drawSimpleTooltip(g, List.of(Lang.s("db.title_short")), List.of(0xFFFFFFFF), mouseX, mouseY);
+        } else if (overPinBtn) {
+            String l1 = Lang.s("map.pins_toggle_tip", showPins ? Lang.s("common.on") : Lang.s("common.off"));
+            String l2 = Lang.s("map.pins_unopened_tip",
+                    ContainerDatabase.showUnopened() ? Lang.s("common.on") : Lang.s("common.off"));
+            drawSimpleTooltip(g, List.of(l1, l2), List.of(0xFFFFFFFF, 0xFF9AA0B0), mouseX, mouseY);
+        } else if (hoveredPin != null) {
             drawPinTooltip(g, hoveredPin, mouseX, mouseY);
+        }
+    }
+
+    private void drawPinToggleIcon(GuiGraphicsExtractor g, boolean hover) {
+        int border = hover ? 0xFFFFFFFF : 0xFF3A3A48;
+        int bg = hover ? 0xF0262A34 : 0xE014161C;
+        g.fill(pinBtnX0 - 1, pinBtnY0 - 1, pinBtnX1 + 1, pinBtnY1 + 1, border);
+        g.fill(pinBtnX0, pinBtnY0, pinBtnX1, pinBtnY1, bg);
+
+        int cx = (pinBtnX0 + pinBtnX1) / 2;
+        int cy = (pinBtnY0 + pinBtnY1) / 2;
+        int col = showPins ? 0xFFFFFFFF : 0xFF6E7382;
+
+        g.fill(cx - 3, cy - 6, cx + 3, cy - 5, col);
+        g.fill(cx - 4, cy - 5, cx + 4, cy - 1, col);
+        g.fill(cx - 3, cy - 1, cx + 3, cy + 1, col);
+        g.fill(cx - 2, cy + 1, cx + 2, cy + 3, col);
+        g.fill(cx - 1, cy + 3, cx + 1, cy + 5, col);
+        g.fill(cx, cy + 5, cx + 1, cy + 6, col);
+        g.fill(cx - 1, cy - 4, cx + 1, cy - 2, bg);
+
+        if (!showPins) {
+            for (int i = -6; i <= 6; i++) {
+                g.fill(cx + i, cy + i, cx + i + 2, cy + i + 1, 0xFFFF7070);
+            }
+        }
+    }
+
+    private void drawSimpleTooltip(GuiGraphicsExtractor g, List<String> lines, List<Integer> colors, int mouseX, int mouseY) {
+        int maxW = 0;
+        for (String line : lines) {
+            maxW = Math.max(maxW, this.font.width(line));
+        }
+        int boxW = maxW + 12;
+        int boxH = lines.size() * 11 + 8;
+        int tx = mouseX + 10;
+        int ty = mouseY + 12;
+        if (tx + boxW > this.width - 4) {
+            tx = Math.max(4, mouseX - boxW - 8);
+        }
+        if (ty + boxH > this.height - BOTTOM_BAR - 4) {
+            ty = Math.max(TOP_BAR + 4, mouseY - boxH - 8);
+        }
+        g.fill(tx - 1, ty - 1, tx + boxW + 1, ty + boxH + 1, 0xFF3A3A48);
+        g.fill(tx, ty, tx + boxW, ty + boxH, 0xF214161C);
+        for (int i = 0; i < lines.size(); i++) {
+            g.text(this.font, lines.get(i), tx + 6, ty + 5 + i * 11, colors.get(i), true);
         }
     }
 
@@ -621,8 +703,12 @@ public class MapScreen extends Screen {
         if (visible.isEmpty()) {
             return;
         }
+        boolean includeUnopened = ContainerDatabase.showUnopened();
         Map<Long, List<ContainerDatabase.ContainerEntry>> grouped = new LinkedHashMap<>();
         for (ContainerDatabase.ContainerEntry e : visible) {
+            if (!includeUnopened && !e.opened()) {
+                continue;
+            }
             if (ContainerDatabase.isSecondaryHalf(e)) {
                 continue;
             }
@@ -631,15 +717,21 @@ public class MapScreen extends Screen {
         }
 
         int pinR = Math.max(3, Math.min(5, (int) Math.round(scale * 0.5 + 2.5)));
-        int hitR = Math.max(pinR + 2, 6);
+        int hitR = Math.max(pinR + 1, 5);
+        List<PinGroup> pins = new ArrayList<>(grouped.size());
         PinGroup bestHover = null;
         double bestDistSq = Double.MAX_VALUE;
 
         for (List<ContainerDatabase.ContainerEntry> col : grouped.values()) {
             ContainerDatabase.ContainerEntry top = col.get(0);
             for (int i = 1; i < col.size(); i++) {
-                if (col.get(i).y() > top.y()) {
-                    top = col.get(i);
+                ContainerDatabase.ContainerEntry cand = col.get(i);
+                if (cand.opened() != top.opened()) {
+                    if (cand.opened()) {
+                        top = cand;
+                    }
+                } else if (cand.y() > top.y()) {
+                    top = cand;
                 }
             }
             int sx = (int) Math.round(mapCX + (top.x() + 0.5 - centerX) * scale);
@@ -647,23 +739,31 @@ public class MapScreen extends Screen {
             if (sx < -10 || sx > this.width + 10 || sy < TOP_BAR - 10 || sy > this.height - BOTTOM_BAR + 10) {
                 continue;
             }
+            PinGroup pg = new PinGroup(top, col.size(), sx, sy);
+            pins.add(pg);
 
-            boolean near = inMap && Math.abs(mouseX - sx) <= hitR && Math.abs(mouseY - sy) <= hitR;
-            if (near) {
+            if (inMap && Math.abs(mouseX - sx) <= hitR && Math.abs(mouseY - sy) <= hitR) {
                 double d2 = (mouseX - sx) * (mouseX - sx) + (mouseY - sy) * (mouseY - sy);
                 if (d2 < bestDistSq) {
                     bestDistSq = d2;
-                    bestHover = new PinGroup(top, col.size());
+                    bestHover = pg;
                 }
             }
+        }
 
-            int color = ContainerDatabase.colorFor(top);
-            int outline = near ? 0xFFFFFFFF : 0xE0000000;
+        for (PinGroup pg : pins) {
+            int sx = pg.sx();
+            int sy = pg.sy();
+            boolean isHovered = pg == bestHover;
+            int color = ContainerDatabase.colorFor(pg.top());
+            int outline = isHovered ? 0xFFFFFFFF : 0xE0000000;
             g.fill(sx - pinR - 1, sy - pinR - 1, sx + pinR + 1, sy + pinR + 1, outline);
             g.fill(sx - pinR, sy - pinR, sx + pinR, sy + pinR, color);
-
-            if (col.size() > 1 && scale >= 0.75) {
-                String badge = String.valueOf(col.size());
+            if (!pg.top().opened()) {
+                g.fill(sx - 1, sy - 1, sx + 1, sy + 1, 0xFF14161C);
+            }
+            if (pg.count() > 1 && scale >= 0.75) {
+                String badge = String.valueOf(pg.count());
                 int bw = this.font.width(badge);
                 g.fill(sx + pinR - 2, sy + pinR - 4, sx + pinR + bw + 1, sy + pinR + 6, 0xE014161C);
                 g.text(this.font, badge, sx + pinR, sy + pinR - 3, 0xFFFFFFFF, false);
@@ -676,8 +776,6 @@ public class MapScreen extends Screen {
         ContainerDatabase.ContainerEntry e = pin.top();
         ContainerDatabase.ContainerEntry partner = ContainerDatabase.partnerOf(e);
         boolean dbl = partner != null && e.slotCount() == 27 && partner.slotCount() == 27;
-        int filled = dbl ? (e.filledSlots() + partner.filledSlots()) : e.filledSlots();
-        int total = dbl ? 54 : e.slotCount();
 
         List<String> lines = new ArrayList<>();
         List<Integer> colors = new ArrayList<>();
@@ -686,8 +784,15 @@ public class MapScreen extends Screen {
         lines.add(title);
         colors.add(0xFFFFFFFF);
 
-        lines.add("X:" + e.x() + " Y:" + e.y() + " Z:" + e.z() + "  •  " + filled + "/" + total);
-        colors.add(0xFF9AA0B0);
+        if (e.opened()) {
+            int filled = dbl ? (e.filledSlots() + partner.filledSlots()) : e.filledSlots();
+            int total = dbl ? 54 : e.slotCount();
+            lines.add("X:" + e.x() + " Y:" + e.y() + " Z:" + e.z() + "  •  " + filled + "/" + total);
+            colors.add(0xFF9AA0B0);
+        } else {
+            lines.add("X:" + e.x() + " Y:" + e.y() + " Z:" + e.z() + "  •  " + Lang.s("db.unopened_tag"));
+            colors.add(0xFFFFD070);
+        }
 
         if (pin.count() > 1) {
             lines.add(Lang.s("map.pin.stack", pin.count()));
@@ -696,26 +801,7 @@ public class MapScreen extends Screen {
         lines.add(Lang.s("map.pin.click"));
         colors.add(0xFF70FF90);
 
-        int maxW = 0;
-        for (String line : lines) {
-            maxW = Math.max(maxW, this.font.width(line));
-        }
-        int boxW = maxW + 12;
-        int boxH = lines.size() * 11 + 8;
-        int tx = mouseX + 12;
-        int ty = mouseY + 12;
-        if (tx + boxW > this.width - 4) {
-            tx = Math.max(4, mouseX - boxW - 8);
-        }
-        if (ty + boxH > this.height - BOTTOM_BAR - 4) {
-            ty = Math.max(TOP_BAR + 4, mouseY - boxH - 8);
-        }
-
-        g.fill(tx - 1, ty - 1, tx + boxW + 1, ty + boxH + 1, 0xFF3A3A48);
-        g.fill(tx, ty, tx + boxW, ty + boxH, 0xF214161C);
-        for (int i = 0; i < lines.size(); i++) {
-            g.text(this.font, lines.get(i), tx + 6, ty + 5 + i * 11, colors.get(i), true);
-        }
+        drawSimpleTooltip(g, lines, colors, mouseX, mouseY);
     }
 
     private void drawTerrainTextured(GuiGraphicsExtractor g, String dimensionId,
@@ -899,6 +985,18 @@ public class MapScreen extends Screen {
         double mx = event.x();
         double my = event.y();
 
+        if (pinBtnX1 > pinBtnX0 && mx >= pinBtnX0 && mx < pinBtnX1 && my >= pinBtnY0 && my < pinBtnY1) {
+            if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+                showPins = !showPins;
+                return true;
+            }
+            if (event.button() == InputConstants.MOUSE_BUTTON_RIGHT) {
+                boolean on = ContainerDatabase.toggleShowUnopened();
+                showToast(Lang.s("db.filter_unopened", on ? Lang.s("common.on") : Lang.s("common.off")));
+                return true;
+            }
+        }
+
         if (event.button() == InputConstants.MOUSE_BUTTON_LEFT && my >= btnY0 && my < btnY1) {
             if (mx >= newX0 && mx < newX1) {
                 if (recordingBlocks()) {
@@ -920,10 +1018,6 @@ public class MapScreen extends Screen {
             }
             if (dbX1 > dbX0 && mx >= dbX0 && mx < dbX1) {
                 Minecraft.getInstance().setScreenAndShow(new ContainerDatabaseScreen(this));
-                return true;
-            }
-            if (pinsX1 > pinsX0 && mx >= pinsX0 && mx < pinsX1) {
-                showPins = !showPins;
                 return true;
             }
             if (areaX1 > areaX0 && mx >= areaX0 && mx < areaX1) {
