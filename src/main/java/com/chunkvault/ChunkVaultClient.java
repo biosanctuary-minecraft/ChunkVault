@@ -1,5 +1,6 @@
 package com.chunkvault;
 
+import com.chunkvault.gui.ContainerDatabaseScreen;
 import com.chunkvault.gui.MapCache;
 import com.chunkvault.gui.MapScreen;
 import com.chunkvault.gui.ProjectMap;
@@ -44,6 +45,7 @@ public class ChunkVaultClient implements ClientModInitializer {
     private static KeyMapping openMapKey;
     private static volatile boolean openMapNextTick;
     private static volatile boolean openSettingsNextTick;
+    private static volatile boolean openChestsNextTick;
     private static int tickCounter;
 
     @Override
@@ -71,10 +73,10 @@ public class ChunkVaultClient implements ClientModInitializer {
             AutoRecord.tick();
             ProjectMap.tick();
             while (openMapKey.consumeClick()) {
-                if (client.player != null
-                        && (!openMapKey.isDefault()
-                        || InputConstants.isKeyDown(client.getWindow(), InputConstants.KEY_C))) {
-                    client.setScreenAndShow(new MapScreen());
+                if (client.player != null) {
+                    if (!openMapKey.isDefault() || InputConstants.isKeyDown(client.getWindow(), InputConstants.KEY_C)) {
+                        client.setScreenAndShow(new MapScreen());
+                    }
                 }
             }
             if (openMapNextTick) {
@@ -84,6 +86,15 @@ public class ChunkVaultClient implements ClientModInitializer {
             if (openSettingsNextTick) {
                 openSettingsNextTick = false;
                 Minecraft.getInstance().setScreenAndShow(new SettingsScreen());
+            }
+            if (openChestsNextTick) {
+                openChestsNextTick = false;
+                MapScreen mapScreen = new MapScreen();
+                if (ProjectMap.isOpen()) {
+                    Minecraft.getInstance().setScreenAndShow(new ContainerDatabaseScreen(mapScreen));
+                } else {
+                    Minecraft.getInstance().setScreenAndShow(mapScreen);
+                }
             }
 
             if (++tickCounter % 40 == 0 && RecordingState.get().isActive()) {
@@ -103,6 +114,7 @@ public class ChunkVaultClient implements ClientModInitializer {
                         .then(literal("stop").executes(ctx -> stop(ctx.getSource())))
                         .then(literal("status").executes(ctx -> status(ctx.getSource())))
                         .then(literal("map").executes(ctx -> map(ctx.getSource())))
+                        .then(literal("chests").executes(ctx -> chests(ctx.getSource())))
                         .then(literal("settings").executes(ctx -> settings(ctx.getSource())))
                         .then(literal("fixworld")
                                 .then(argument("name", StringArgumentType.word())
@@ -229,6 +241,15 @@ public class ChunkVaultClient implements ClientModInitializer {
 
     private int map(FabricClientCommandSource source) {
         openMapNextTick = true;
+        return 1;
+    }
+
+    private int chests(FabricClientCommandSource source) {
+        if (!ProjectMap.isOpen()) {
+            source.sendFeedback(Component.literal("§c[ChunkVault] " + Lang.s("db.no_project")));
+            return 0;
+        }
+        openChestsNextTick = true;
         return 1;
     }
 
