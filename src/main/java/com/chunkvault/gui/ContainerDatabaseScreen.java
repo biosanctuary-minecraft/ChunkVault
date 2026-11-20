@@ -9,7 +9,11 @@ import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -18,7 +22,7 @@ import java.util.Locale;
 
 public class ContainerDatabaseScreen extends Screen {
 
-    private static final int MAX_W = 460;
+    private static final int MAX_W = 480;
     private static final int ROW_H = 24;
     private static final int LIST_TOP = 94;
     private static final int SCROLLBAR_W = 6;
@@ -34,6 +38,7 @@ public class ContainerDatabaseScreen extends Screen {
 
     private record IndexedContainer(
             ContainerDatabase.ContainerEntry entry,
+            ItemStack icon,
             boolean doubleChest,
             int totalSlots,
             int filledSlots,
@@ -50,8 +55,6 @@ public class ContainerDatabaseScreen extends Screen {
 
     private final MapScreen parent;
     private EditBox searchBox;
-    private Button dimButton;
-    private Button catButton;
 
     private String query = "";
     private boolean allDimensions;
@@ -81,6 +84,20 @@ public class ContainerDatabaseScreen extends Screen {
         return level == null ? "minecraft:overworld" : level.dimension().identifier().toString();
     }
 
+    private static ItemStack iconFor(String blockId) {
+        Identifier id = Identifier.tryParse(blockId == null ? "" : blockId);
+        if (id != null) {
+            var opt = BuiltInRegistries.BLOCK.getOptional(id);
+            if (opt.isPresent()) {
+                ItemStack s = new ItemStack(opt.get().asItem());
+                if (!s.isEmpty()) {
+                    return s;
+                }
+            }
+        }
+        return new ItemStack(Items.CHEST);
+    }
+
     private void ensureIndex() {
         int rev = ContainerDatabase.revision();
         if (rev == cachedRevision) {
@@ -99,7 +116,7 @@ public class ContainerDatabaseScreen extends Screen {
             boolean dbl = partner != null && e.slotCount() == 27 && partner.slotCount() == 27;
             int totalSlots = dbl ? 54 : e.slotCount();
             int filledSlots = dbl ? (e.filledSlots() + partner.filledSlots()) : e.filledSlots();
-            List<ItemStack> items = registries == null
+            List<ItemStack> items = (registries == null || !e.opened())
                     ? List.of()
                     : ContainerContentReader.collectAllItemsIncludingNested(e, registries);
             List<String> texts = new ArrayList<>(items.size());
@@ -107,7 +124,7 @@ public class ContainerDatabaseScreen extends Screen {
                 texts.add(ContainerContentReader.itemSearchText(s));
             }
             String title = (e.displayTitle() + " " + e.blockId()).toLowerCase(Locale.ROOT);
-            index.add(new IndexedContainer(e, dbl, totalSlots, filledSlots, title, items, texts));
+            index.add(new IndexedContainer(e, iconFor(e.blockId()), dbl, totalSlots, filledSlots, title, items, texts));
         }
         rebuildFilter();
     }
@@ -117,9 +134,13 @@ public class ContainerDatabaseScreen extends Screen {
         String q = query.trim().toLowerCase(Locale.ROOT);
         String curDim = currentDimension();
         String cat = CATEGORIES[catIndex];
+        boolean showUnopened = ContainerDatabase.showUnopened();
 
         for (IndexedContainer ic : index) {
             ContainerDatabase.ContainerEntry e = ic.entry();
+            if (!showUnopened && !e.opened()) {
+                continue;
+            }
             if (!allDimensions && !e.dimension().equals(curDim)) {
                 continue;
             }
@@ -148,9 +169,11 @@ public class ContainerDatabaseScreen extends Screen {
 
         if (!q.isEmpty()) {
             rows.sort(Comparator.comparingInt(ResultRow::matchedCount).reversed()
+                    .thenComparing((ResultRow r) -> r.item().entry().opened(), Comparator.reverseOrder())
                     .thenComparingLong((ResultRow r) -> r.item().entry().updatedAt()).reversed());
         } else {
-            rows.sort(Comparator.comparingLong((ResultRow r) -> r.item().entry().updatedAt()).reversed());
+            rows.sort(Comparator.comparing((ResultRow r) -> r.item().entry().opened(), Comparator.reverseOrder())
+                    .thenComparingLong((ResultRow r) -> r.item().entry().updatedAt()).reversed());
         }
 
         if (selected >= rows.size()) {
@@ -181,21 +204,26 @@ public class ContainerDatabaseScreen extends Screen {
         this.addRenderableWidget(searchBox);
         this.setInitialFocus(searchBox);
 
-        int half = (w - 6) / 2;
-        dimButton = this.addRenderableWidget(Button.builder(dimLabel(), b -> {
+        int third = (w - 12) / 3;
+        this.addRenderableWidget(Button.builder(dimLabel(), b -> {
             allDimensions = !allDimensions;
             b.setMessage(dimLabel());
             rebuildFilter();
-        }).bounds(x, 60, half, 20).build());
+        }).bounds(x, 60, third, 20).build());
 
-        catButton = this.addRenderableWidget(Button.builder(catLabel(), b -> {
+        this.addRenderableWidget(Button.builder(catLabel(), b -> {
             catIndex = (catIndex + 1) % CATEGORIES.length;
             b.setMessage(catLabel());
             rebuildFilter();
-        }).bounds(x + half + 6, 60, w - half - 6, 20).build());
+        }).bounds(x + third + 6, 60, third, 20).build());
+
+        this.addRenderableWidget(Button.builder(unopenedLabel(), b -> {
+            ContainerDatabase.toggleShowUnopened();
+            b.setMessage(unopenedLabel());
+            rebuildFilter();
+        }).bounds(x + (third + 6) * 2, 60, w - (third + 6) * 2, 20).build());
 
         int btnY = listBottom + 12;
-        int third = (w - 12) / 3;
         this.addRenderableWidget(Button.builder(Lang.c("db.open_slots"), b -> openSelected())
                 .bounds(x, btnY, third, 20)
                 .build());
@@ -207,12 +235,16 @@ public class ContainerDatabaseScreen extends Screen {
                 .build());
     }
 
-    private net.minecraft.network.chat.Component dimLabel() {
+    private Component dimLabel() {
         return Lang.c("db.filter_dim", allDimensions ? Lang.s("db.dim.all") : Lang.s("db.dim.current"));
     }
 
-    private net.minecraft.network.chat.Component catLabel() {
+    private Component catLabel() {
         return Lang.c("db.filter_type", Lang.s("db.cat." + CATEGORIES[catIndex]));
+    }
+
+    private Component unopenedLabel() {
+        return Lang.c("db.filter_unopened", ContainerDatabase.showUnopened() ? Lang.s("common.on") : Lang.s("common.off"));
     }
 
     private void openSelected() {
@@ -342,24 +374,30 @@ public class ContainerDatabaseScreen extends Screen {
 
             g.fill(x, ry, x + 3, ry + ROW_H - 1, ContainerDatabase.colorFor(e));
 
-            int textLeft = x + 8;
+            int textLeft = x + 7;
+            g.item(ic.icon(), textLeft, ry + 4);
+            textLeft += 20;
+
             if (row.matchedStack() != null) {
                 g.item(row.matchedStack(), textLeft, ry + 4);
-                textLeft += 20;
+                textLeft += 18;
                 String countBadge = "×" + row.matchedCount();
                 g.text(this.font, countBadge, textLeft, ry + 8, 0xFF70FF90, true);
                 textLeft += this.font.width(countBadge) + 8;
             }
 
-            String rightInfo = "X:" + e.x() + " Y:" + e.y() + " Z:" + e.z()
-                    + "  •  " + ic.filledSlots() + "/" + ic.totalSlots();
+            String slotPart = e.opened()
+                    ? (ic.filledSlots() + "/" + ic.totalSlots())
+                    : Lang.s("db.unopened_tag");
+            String rightInfo = "X:" + e.x() + " Y:" + e.y() + " Z:" + e.z() + "  •  " + slotPart;
             if (allDimensions) {
                 rightInfo = shortDim(e.dimension()) + "  •  " + rightInfo;
             }
             int rightW = this.font.width(rightInfo);
 
             String title = e.displayTitle() + (ic.doubleChest() ? " (2x)" : "");
-            g.text(this.font, fit(title, contentRight - textLeft - rightW - 14), textLeft, ry + 8, 0xFFFFFFFF, true);
+            int titleColor = e.opened() ? 0xFFFFFFFF : 0xFFB0B4C0;
+            g.text(this.font, fit(title, contentRight - textLeft - rightW - 14), textLeft, ry + 8, titleColor, true);
             g.text(this.font, rightInfo, contentRight - rightW - 8, ry + 8, 0xFF9AA0B0, true);
         }
 
