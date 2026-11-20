@@ -31,6 +31,7 @@ public class SettingsScreen extends Screen {
 
     @Override
     public void onClose() {
+        applySeed();
         if (parent != null) {
             Minecraft.getInstance().setScreenAndShow(parent);
         } else {
@@ -72,10 +73,7 @@ public class SettingsScreen extends Screen {
         this.addRenderableWidget(seedBox);
         y += ROW_H + 10;
 
-        this.addRenderableWidget(Button.builder(Lang.c("common.done"), b -> {
-                    applySeed();
-                    this.onClose();
-                })
+        this.addRenderableWidget(Button.builder(Lang.c("common.done"), b -> this.onClose())
                 .bounds(x, y, WIDTH, 20)
                 .build());
     }
@@ -124,6 +122,9 @@ public class SettingsScreen extends Screen {
     }
 
     private void applySeed() {
+        if (seedBox == null) {
+            return;
+        }
         try {
             String text = seedBox.getValue().trim();
             long seed = text.isEmpty() ? 0L : Long.parseLong(text);
