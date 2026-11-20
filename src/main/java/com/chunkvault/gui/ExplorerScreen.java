@@ -29,6 +29,8 @@ public class ExplorerScreen extends Screen {
     private static final int W = 360;
     private static final int ROW_H = 20;
     private static final int LIST_TOP = 50;
+    private static final int SCROLLBAR_W = 6;
+    private static final int SCROLLBAR_PAD = 2;
 
     private record Entry(String name, String date) {}
 
@@ -37,6 +39,8 @@ public class ExplorerScreen extends Screen {
     private int selected = -1;
     private int scroll;
     private int listBottom;
+    private boolean draggingScrollbar;
+    private double dragOffsetY;
     private String info = "";
 
     private volatile boolean copying;
@@ -86,9 +90,11 @@ public class ExplorerScreen extends Screen {
     @Override
     protected void init() {
         super.init();
+        draggingScrollbar = false;
         scanFolders();
         int x = (this.width - W) / 2;
         listBottom = Math.max(LIST_TOP + ROW_H * 3, this.height - 140);
+        scroll = Math.max(0, Math.min(scroll, maxScroll()));
         int y0 = listBottom + 30;
         int half = (W - 6) / 2;
 
@@ -240,7 +246,62 @@ public class ExplorerScreen extends Screen {
         return Math.max(1, (listBottom - LIST_TOP) / ROW_H);
     }
 
+    private int maxScroll() {
+        return Math.max(0, entries.size() - visibleRows());
+    }
+
+    private boolean hasScrollbar() {
+        return entries.size() > visibleRows();
+    }
+
+    private int scrollbarTrackTop() {
+        return LIST_TOP + 2;
+    }
+
+    private int scrollbarTrackBottom() {
+        return listBottom - 2;
+    }
+
+    private int scrollbarThumbHeight() {
+        int trackH = Math.max(1, scrollbarTrackBottom() - scrollbarTrackTop());
+        int rows = visibleRows();
+        if (entries.isEmpty() || entries.size() <= rows) {
+            return trackH;
+        }
+        int h = (int) Math.round((double) trackH * rows / entries.size());
+        return Math.max(20, Math.min(h, trackH));
+    }
+
+    private int scrollbarThumbTop() {
+        int trackTop = scrollbarTrackTop();
+        int trackH = Math.max(1, scrollbarTrackBottom() - trackTop);
+        int thumbH = scrollbarThumbHeight();
+        int travel = trackH - thumbH;
+        int max = maxScroll();
+        if (travel <= 0 || max <= 0) {
+            return trackTop;
+        }
+        return trackTop + (int) Math.round((double) travel * scroll / max);
+    }
+
+    private void scrollFromThumbTop(double thumbTop) {
+        int trackTop = scrollbarTrackTop();
+        int trackH = Math.max(1, scrollbarTrackBottom() - trackTop);
+        int thumbH = scrollbarThumbHeight();
+        int travel = trackH - thumbH;
+        int max = maxScroll();
+        if (travel <= 0 || max <= 0) {
+            scroll = 0;
+            return;
+        }
+        double ratio = Math.max(0.0, Math.min(1.0, (thumbTop - trackTop) / travel));
+        scroll = (int) Math.round(ratio * max);
+    }
+
     private String fit(String text, int maxWidth) {
+        if (maxWidth <= 0) {
+            return "";
+        }
         if (this.font.width(text) <= maxWidth) {
             return text;
         }
@@ -256,29 +317,55 @@ public class ExplorerScreen extends Screen {
         g.fill(0, 0, this.width, this.height, 0xF0101018);
         g.centeredText(this.font, this.title.getString(), this.width / 2, 14, 0xFFFFFFFF);
         int x = (this.width - W) / 2;
-        g.text(this.font, Lang.s("explorer.folder", fit(root().toString(), W - 60)), x, 32, 0xFF808090, true);
+
+        int rows = visibleRows();
+        scroll = Math.max(0, Math.min(scroll, maxScroll()));
+        boolean hasScroll = hasScrollbar();
+
+        int headerY = LIST_TOP - 14;
+        String rangeText = hasScroll
+                ? Lang.s("explorer.range", scroll + 1, Math.min(entries.size(), scroll + rows), entries.size())
+                : "";
+        int rangeW = rangeText.isEmpty() ? 0 : this.font.width(rangeText);
+        int folderMaxW = rangeW > 0 ? W - rangeW - 12 : W;
+        g.text(this.font, fit(Lang.s("explorer.folder", root().toString()), folderMaxW), x, headerY, 0xFF808090, true);
+        if (rangeW > 0) {
+            g.text(this.font, rangeText, x + W - rangeW, headerY, 0xFF808090, true);
+        }
 
         g.fill(x - 1, LIST_TOP - 1, x + W + 1, listBottom + 1, 0xFF3A3A48);
         g.fill(x, LIST_TOP, x + W, listBottom, 0xFF14161C);
         if (entries.isEmpty()) {
             g.centeredText(this.font, Lang.s("explorer.empty"), this.width / 2, LIST_TOP + 16, 0xFF888899);
         }
-        int rows = visibleRows();
-        scroll = Math.max(0, Math.min(scroll, Math.max(0, entries.size() - rows)));
+
+        int contentRight = hasScroll ? x + W - SCROLLBAR_W - SCROLLBAR_PAD * 2 : x + W;
+        int contentW = contentRight - x;
         for (int i = 0; i < rows && scroll + i < entries.size(); i++) {
             int idx = scroll + i;
             int ry = LIST_TOP + i * ROW_H;
-            boolean hover = mouseX >= x && mouseX < x + W && mouseY >= ry && mouseY < ry + ROW_H;
+            boolean hover = !draggingScrollbar
+                    && mouseX >= x && mouseX < contentRight
+                    && mouseY >= ry && mouseY < ry + ROW_H;
             int bg = idx == selected ? 0xFF8A6A1A : hover ? 0xFF262A34 : 0xFF1C1F27;
-            g.fill(x, ry, x + W, ry + ROW_H - 1, bg);
+            g.fill(x, ry, contentRight, ry + ROW_H - 1, bg);
             Entry e = entries.get(idx);
             int dateW = this.font.width(e.date());
-            g.text(this.font, fit(e.name(), W - dateW - 24), x + 8, ry + 6, 0xFFFFFFFF, true);
-            g.text(this.font, e.date(), x + W - dateW - 8, ry + 6, 0xFF9AA0B0, true);
+            g.text(this.font, fit(e.name(), contentW - dateW - 24), x + 8, ry + 6, 0xFFFFFFFF, true);
+            g.text(this.font, e.date(), contentRight - dateW - 8, ry + 6, 0xFF9AA0B0, true);
         }
-        if (entries.size() > rows) {
-            g.text(this.font, Lang.s("explorer.range", scroll + 1, Math.min(entries.size(), scroll + rows), entries.size()),
-                    x + W - 80, LIST_TOP - 11, 0xFF808090, true);
+
+        if (hasScroll) {
+            int trackX0 = x + W - SCROLLBAR_W - SCROLLBAR_PAD;
+            int trackX1 = x + W - SCROLLBAR_PAD;
+            int trackY0 = scrollbarTrackTop();
+            int trackY1 = scrollbarTrackBottom();
+            int thumbY0 = scrollbarThumbTop();
+            int thumbY1 = thumbY0 + scrollbarThumbHeight();
+            boolean thumbHover = mouseX >= trackX0 && mouseX < trackX1 && mouseY >= thumbY0 && mouseY < thumbY1;
+            int thumbColor = draggingScrollbar ? 0xFF9AA4C0 : thumbHover ? 0xFF7A829C : 0xFF5A6074;
+            g.fill(trackX0, trackY0, trackX1, trackY1, 0xFF0E1015);
+            g.fill(trackX0, thumbY0, trackX1, thumbY1, thumbColor);
         }
 
         g.text(this.font, fit(info, W), x, listBottom + 6, 0xFFAAAAAA, true);
@@ -293,9 +380,32 @@ public class ExplorerScreen extends Screen {
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean isDoubleClick) {
         int x = (this.width - W) / 2;
-        if (event.x() >= x && event.x() < x + W && event.y() >= LIST_TOP && event.y() < listBottom) {
-            int idx = scroll + (int) ((event.y() - LIST_TOP) / ROW_H);
-            if (idx >= 0 && idx < entries.size()) {
+        boolean hasScroll = hasScrollbar();
+        int contentRight = hasScroll ? x + W - SCROLLBAR_W - SCROLLBAR_PAD * 2 : x + W;
+
+        if (hasScroll && event.button() == 0) {
+            int trackX0 = x + W - SCROLLBAR_W - SCROLLBAR_PAD;
+            int trackX1 = x + W - SCROLLBAR_PAD;
+            int trackY0 = scrollbarTrackTop();
+            int trackY1 = scrollbarTrackBottom();
+            if (event.x() >= trackX0 && event.x() < trackX1 && event.y() >= trackY0 && event.y() < trackY1) {
+                int thumbY0 = scrollbarThumbTop();
+                int thumbH = scrollbarThumbHeight();
+                if (event.y() >= thumbY0 && event.y() < thumbY0 + thumbH) {
+                    dragOffsetY = event.y() - thumbY0;
+                } else {
+                    dragOffsetY = thumbH / 2.0;
+                    scrollFromThumbTop(event.y() - dragOffsetY);
+                }
+                draggingScrollbar = true;
+                return true;
+            }
+        }
+
+        if (event.x() >= x && event.x() < contentRight && event.y() >= LIST_TOP && event.y() < listBottom) {
+            int row = (int) ((event.y() - LIST_TOP) / ROW_H);
+            int idx = scroll + row;
+            if (row >= 0 && row < visibleRows() && idx >= 0 && idx < entries.size()) {
                 boolean again = isDoubleClick && idx == selected;
                 selected = idx;
                 info = describe(root().resolve(entries.get(idx).name()));
@@ -310,9 +420,27 @@ public class ExplorerScreen extends Screen {
     }
 
     @Override
+    public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
+        if (draggingScrollbar && event.button() == 0) {
+            scrollFromThumbTop(event.y() - dragOffsetY);
+            return true;
+        }
+        return super.mouseDragged(event, dragX, dragY);
+    }
+
+    @Override
+    public boolean mouseReleased(MouseButtonEvent event) {
+        if (draggingScrollbar && event.button() == 0) {
+            draggingScrollbar = false;
+            return true;
+        }
+        return super.mouseReleased(event);
+    }
+
+    @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
         if (scrollY != 0 && !entries.isEmpty()) {
-            scroll += scrollY > 0 ? -1 : 1;
+            scroll = Math.max(0, Math.min(maxScroll(), scroll + (scrollY > 0 ? -1 : 1)));
             return true;
         }
         return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
