@@ -9,7 +9,13 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtIo;
 import net.minecraft.resources.Identifier;
+import net.minecraft.core.NonNullList;
+import net.minecraft.util.ProblemReporter;
 import net.minecraft.world.Container;
+import net.minecraft.world.ContainerHelper;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.entity.EnderChestBlockEntity;
+import net.minecraft.world.level.storage.TagValueOutput;
 import net.minecraft.world.Nameable;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.ChestBlock;
@@ -270,6 +276,46 @@ public final class ContainerDatabase {
         }
     }
 
+    public static void putEnderChest(ClientLevel level, BlockEntity be, Container source) {
+        try {
+            String dimension = level.dimension().identifier().toString();
+            BlockPos pos = be.getBlockPos();
+            String blockId = blockIdOf(be);
+            CompoundTag tag = be.saveWithFullMetadata(level.registryAccess());
+            NonNullList<ItemStack> items = NonNullList.withSize(27, ItemStack.EMPTY);
+            int filled = 0;
+            int count = Math.min(27, source.getContainerSize());
+            for (int i = 0; i < count; i++) {
+                ItemStack stack = source.getItem(i);
+                if (!stack.isEmpty()) {
+                    items.set(i, stack.copy());
+                    filled++;
+                }
+            }
+            TagValueOutput output = TagValueOutput.createWithContext(ProblemReporter.DISCARDING, level.registryAccess());
+            ContainerHelper.saveAllItems(output, items);
+            CompoundTag itemTag = output.buildResult();
+            if (itemTag.contains("Items")) {
+                tag.put("Items", itemTag.get("Items").copy());
+            }
+            String key = keyOf(dimension, pos.getX(), pos.getY(), pos.getZ());
+            ContainerEntry entry = new ContainerEntry(
+                    key, dimension, pos.getX(), pos.getY(), pos.getZ(),
+                    blockId, "", 27, filled,
+                    System.currentTimeMillis(), "", null, true, tag
+            );
+            synchronized (INDEX_LOCK) {
+                ENTRIES.put(entry.key(), entry);
+                indexSingleLocked(entry);
+                REVISION.incrementAndGet();
+                dirty = true;
+                scheduleSaveLocked();
+            }
+        } catch (Throwable t) {
+            System.err.println("[ChunkVault] Failed to store ender chest at " + be.getBlockPos() + ": " + t);
+        }
+    }
+
     public static void syncChunkContainers(ClientLevel level, LevelChunk chunk) {
         if (level == null || chunk == null) {
             return;
@@ -287,7 +333,8 @@ public final class ContainerDatabase {
             if (be instanceof ChiseledBookShelfBlockEntity) {
                 continue;
             }
-            if (!(be instanceof Container container) || container.getContainerSize() < 3) {
+            boolean isEnder = be instanceof EnderChestBlockEntity;
+            if (!isEnder && (!(be instanceof Container container) || container.getContainerSize() < 3)) {
                 continue;
             }
             BlockPos pos = be.getBlockPos();
@@ -364,7 +411,8 @@ public final class ContainerDatabase {
             if (be instanceof ChiseledBookShelfBlockEntity) {
                 continue;
             }
-            if (!(be instanceof Container container) || container.getContainerSize() < 3) {
+            boolean isEnder = be instanceof EnderChestBlockEntity;
+            if (!isEnder && (!(be instanceof Container container) || container.getContainerSize() < 3)) {
                 continue;
             }
             BlockPos pos = be.getBlockPos();
@@ -453,6 +501,9 @@ public final class ContainerDatabase {
     }
 
     public static CompoundTag overrideFor(ClientLevel level, BlockPos pos, BlockEntity be) {
+        if (be instanceof EnderChestBlockEntity) {
+            return null;
+        }
         String key = keyOf(level.dimension().identifier().toString(), pos.getX(), pos.getY(), pos.getZ());
         ContainerEntry entry = ENTRIES.get(key);
         if (entry == null || !entry.opened() || !entry.blockId().equals(blockIdOf(be))) {
@@ -544,7 +595,9 @@ public final class ContainerDatabase {
 
     public static int colorFor(ContainerEntry entry) {
         int base;
-        if (CAT_SHULKERS.equals(entry.category())) {
+        if (entry.blockId() != null && entry.blockId().endsWith(":ender_chest")) {
+            base = 0xFF28B8A8;
+        } else if (CAT_SHULKERS.equals(entry.category())) {
             base = MapPinFilter.shulkerColorRgb(entry.blockId());
         } else {
             base = switch (entry.category()) {
