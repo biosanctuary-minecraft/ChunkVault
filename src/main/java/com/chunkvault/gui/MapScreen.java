@@ -51,6 +51,11 @@ public class MapScreen extends Screen {
     private double centerX;
     private double centerZ;
     private double scale = lastScale;
+    private double targetScale = lastScale;
+    private long lastRenderNs;
+    private boolean zoomHasPivot;
+    private double zoomPivotX;
+    private double zoomPivotY;
     private int frame;
 
     private double dev = 1.0;
@@ -217,21 +222,24 @@ public class MapScreen extends Screen {
             centerX = player.getX();
             centerZ = player.getZ();
         }
+        zoomHasPivot = false;
     }
 
     private void zoomCenter(double factor) {
-        scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale * factor));
-        lastScale = scale;
+        targetScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, targetScale * factor));
+        lastScale = targetScale;
+        zoomHasPivot = false;
     }
 
     public void focusOn(int x, int z) {
         followPlayer = false;
         centerX = x + 0.5;
         centerZ = z + 0.5;
-        if (scale < 2.0) {
-            scale = 2.0;
-            lastScale = scale;
+        if (targetScale < 2.0) {
+            targetScale = 2.0;
+            lastScale = targetScale;
         }
+        zoomHasPivot = false;
         focusX = x;
         focusZ = z;
         focusUntil = System.currentTimeMillis() + 3000;
@@ -305,11 +313,6 @@ public class MapScreen extends Screen {
             return;
         }
 
-        if (followPlayer && !draggingMap) {
-            centerX = player.getX();
-            centerZ = player.getZ();
-        }
-
         final int mapX0 = 0;
         final int mapY0 = TOP_BAR;
         final int mapX1 = this.width;
@@ -318,6 +321,35 @@ public class MapScreen extends Screen {
         final int mapH = mapY1 - mapY0;
         final double mapCX = mapX0 + mapW / 2.0;
         final double mapCY = mapY0 + mapH / 2.0;
+
+        long nowNs = System.nanoTime();
+        double dt = lastRenderNs == 0L ? 0.0 : Math.min(0.1, (nowNs - lastRenderNs) * 1.0e-9);
+        lastRenderNs = nowNs;
+
+        if (scale != targetScale && dt > 0.0) {
+            double t = 1.0 - Math.exp(-15.0 * dt);
+            double nextScale = Math.exp(Math.log(scale) + (Math.log(targetScale) - Math.log(scale)) * t);
+            if (Math.abs(nextScale - targetScale) / targetScale < 0.001) {
+                nextScale = targetScale;
+            }
+            if (!followPlayer && zoomHasPivot) {
+                double blockX = centerX + (zoomPivotX - mapCX) / scale;
+                double blockZ = centerZ + (zoomPivotY - mapCY) / scale;
+                scale = nextScale;
+                centerX = blockX - (zoomPivotX - mapCX) / scale;
+                centerZ = blockZ - (zoomPivotY - mapCY) / scale;
+            } else {
+                scale = nextScale;
+            }
+        }
+
+        var playerPos = player.getPosition(partialTick);
+        double playerX = playerPos.x();
+        double playerZ = playerPos.z();
+        if (followPlayer && !draggingMap) {
+            centerX = playerX;
+            centerZ = playerZ;
+        }
 
         String dimensionId = level.dimension().identifier().toString();
         var cache = ProjectMap.forDimension(dimensionId);
@@ -580,9 +612,9 @@ public class MapScreen extends Screen {
             fillI(g, x1 - 1, y0, x1, y1, borderC);
         }
 
-        double pcx = (mapCX + (player.getX() - centerX) * scale) * dev;
-        double pcy = (mapCY + (player.getZ() - centerZ) * scale) * dev;
-        double yaw = Math.toRadians(player.getYRot());
+        double pcx = (mapCX + (playerX - centerX) * scale) * dev;
+        double pcy = (mapCY + (playerZ - centerZ) * scale) * dev;
+        double yaw = Math.toRadians(player.getViewYRot(partialTick));
         drawArrow(g, pcx, pcy, -Math.sin(yaw), Math.cos(yaw), 3.2 * dev + 5.0);
 
         hoveredPin = null;
@@ -620,8 +652,8 @@ public class MapScreen extends Screen {
 
         g.disableScissor();
 
-        drawZoomButtonIcon(g, zoomInBtnX0, zoomInBtnY0, zoomInBtnX1, zoomInBtnY1, true, overZoomInBtn, scale < MAX_SCALE);
-        drawZoomButtonIcon(g, zoomOutBtnX0, zoomOutBtnY0, zoomOutBtnX1, zoomOutBtnY1, false, overZoomOutBtn, scale > MIN_SCALE);
+        drawZoomButtonIcon(g, zoomInBtnX0, zoomInBtnY0, zoomInBtnX1, zoomInBtnY1, true, overZoomInBtn, targetScale < MAX_SCALE);
+        drawZoomButtonIcon(g, zoomOutBtnX0, zoomOutBtnY0, zoomOutBtnX1, zoomOutBtnY1, false, overZoomOutBtn, targetScale > MIN_SCALE);
         drawFollowToggleIcon(g, overFollowBtn);
 
         if (showDimBtn) {
@@ -1477,19 +1509,24 @@ public class MapScreen extends Screen {
     private void drawTerrainTextured(GuiGraphicsExtractor g, String dimensionId,
                                      Map<Long, MapCache.ChunkColors> cache,
                                      double mapCX, double mapCY, int minCx, int maxCx, int minCz, int maxCz) {
-        int lodIdx = scale * dev >= 0.6 ? 0 : 1;
-        int size = MapTextures.SIZE[lodIdx];
+        double pxPerBlock = scale * dev;
+        int lodIdx = pxPerBlock >= 0.5 ? 0 : (pxPerBlock >= 0.25 ? 1 : 2);
         var regionKeys = ProjectMap.regionKeys(dimensionId);
         int rMinX = minCx >> 4;
         int rMaxX = maxCx >> 4;
         int rMinZ = minCz >> 4;
         int rMaxZ = maxCz >> 4;
+        double originX = rMinX * 256.0;
+        double originZ = rMinZ * 256.0;
+        double offX = (mapCX + (originX - centerX) * scale) * dev;
+        double offY = (mapCY + (originZ - centerZ) * scale) * dev;
+
+        g.pose().pushMatrix();
+        g.pose().translate((float) offX, (float) offY);
+        float texScale = (float) pxPerBlock;
+        g.pose().scale(texScale, texScale);
         for (int rz = rMinZ; rz <= rMaxZ; rz++) {
-            int y0 = (int) Math.round((mapCY + (rz * 256.0 - centerZ) * scale) * dev);
-            int y1 = (int) Math.round((mapCY + ((rz + 1) * 256.0 - centerZ) * scale) * dev);
-            if (y1 <= y0) {
-                continue;
-            }
+            int relZ = (rz - rMinZ) * 256;
             for (int rx = rMinX; rx <= rMaxX; rx++) {
                 if (!regionKeys.contains(MapCache.key(rx, rz))) {
                     continue;
@@ -1498,15 +1535,13 @@ public class MapScreen extends Screen {
                 if (lod == null) {
                     continue;
                 }
-                int x0 = (int) Math.round((mapCX + (rx * 256.0 - centerX) * scale) * dev);
-                int x1 = (int) Math.round((mapCX + ((rx + 1) * 256.0 - centerX) * scale) * dev);
-                if (x1 <= x0) {
-                    continue;
-                }
-                g.blit(RenderPipelines.GUI_TEXTURED, lod.id, x0, y0, 0, 0, x1 - x0, y1 - y0,
+                int relX = (rx - rMinX) * 256;
+                int size = lod.size;
+                g.blit(RenderPipelines.GUI_TEXTURED, lod.id, relX, relZ, 0, 0, 256, 256,
                         size, size, size, size);
             }
         }
+        g.pose().popMatrix();
     }
 
     private void updateZone(Minecraft mc, ClientLevel level, LocalPlayer player) {
@@ -1977,6 +2012,7 @@ public class MapScreen extends Screen {
             }
             centerX -= dragX / scale;
             centerZ -= dragY / scale;
+            zoomHasPivot = false;
             return true;
         }
         return super.mouseDragged(event, dragX, dragY);
@@ -2027,16 +2063,11 @@ public class MapScreen extends Screen {
             zoomCenter(scrollY > 0 ? 1.25 : 0.8);
             return true;
         }
-        double mapCX = this.width / 2.0;
-        double mapCY = TOP_BAR + (this.height - TOP_BAR - BOTTOM_BAR) / 2.0;
-        double blockX = centerX + (mouseX - mapCX) / scale;
-        double blockZ = centerZ + (mouseY - mapCY) / scale;
-
-        scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale * (scrollY > 0 ? 1.25 : 0.8)));
-        lastScale = scale;
-
-        centerX = blockX - (mouseX - mapCX) / scale;
-        centerZ = blockZ - (mouseY - mapCY) / scale;
+        targetScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, targetScale * (scrollY > 0 ? 1.25 : 0.8)));
+        lastScale = targetScale;
+        zoomPivotX = mouseX;
+        zoomPivotY = mouseY;
+        zoomHasPivot = true;
         return true;
     }
 
