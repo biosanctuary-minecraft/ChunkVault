@@ -41,6 +41,7 @@ public class MapScreen extends Screen {
 
     private static double lastScale = 1.0;
     private static boolean showPins = true;
+    private static boolean followPlayer = false;
     private static ItemStack chestIcon;
 
     private record PinGroup(ContainerDatabase.ContainerEntry top, int count, int sxDev, int syDev) {}
@@ -94,6 +95,21 @@ public class MapScreen extends Screen {
     private int dimBtnY0;
     private int dimBtnX1;
     private int dimBtnY1;
+
+    private int followBtnX0;
+    private int followBtnY0;
+    private int followBtnX1;
+    private int followBtnY1;
+
+    private int zoomOutBtnX0;
+    private int zoomOutBtnY0;
+    private int zoomOutBtnX1;
+    private int zoomOutBtnY1;
+
+    private int zoomInBtnX0;
+    private int zoomInBtnY0;
+    private int zoomInBtnX1;
+    private int zoomInBtnY1;
 
     private boolean filterPanelOpen;
     private EditBox filterSearchBox;
@@ -203,7 +219,13 @@ public class MapScreen extends Screen {
         }
     }
 
+    private void zoomCenter(double factor) {
+        scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale * factor));
+        lastScale = scale;
+    }
+
     public void focusOn(int x, int z) {
+        followPlayer = false;
         centerX = x + 0.5;
         centerZ = z + 0.5;
         if (scale < 2.0) {
@@ -222,6 +244,7 @@ public class MapScreen extends Screen {
         areaPanelOpen = true;
         trimConfirmUntil = 0;
         if (AreaPlan.isActive()) {
+            followPlayer = false;
             centerX = (AreaPlan.minCx() + AreaPlan.maxCx() + 1) * 8.0;
             centerZ = (AreaPlan.minCz() + AreaPlan.maxCz() + 1) * 8.0;
             showToast(Lang.s("area.set_toast", AreaPlan.totalChunks()));
@@ -282,6 +305,11 @@ public class MapScreen extends Screen {
             return;
         }
 
+        if (followPlayer && !draggingMap) {
+            centerX = player.getX();
+            centerZ = player.getZ();
+        }
+
         final int mapX0 = 0;
         final int mapY0 = TOP_BAR;
         final int mapX1 = this.width;
@@ -323,6 +351,21 @@ public class MapScreen extends Screen {
             dimBtnY1 = 0;
         }
 
+        followBtnX0 = 8;
+        followBtnX1 = followBtnX0 + 22;
+        followBtnY1 = this.height - BOTTOM_BAR - 8;
+        followBtnY0 = followBtnY1 - 22;
+
+        zoomOutBtnX0 = 8;
+        zoomOutBtnX1 = zoomOutBtnX0 + 22;
+        zoomOutBtnY1 = followBtnY0 - 6;
+        zoomOutBtnY0 = zoomOutBtnY1 - 22;
+
+        zoomInBtnX0 = 8;
+        zoomInBtnX1 = zoomInBtnX0 + 22;
+        zoomInBtnY1 = zoomOutBtnY0 - 4;
+        zoomInBtnY0 = zoomInBtnY1 - 22;
+
         updateFilterPanelBounds(hasProject, showDimBtn);
 
         boolean overPinBtn = hasProject && mouseX >= pinBtnX0 && mouseX < pinBtnX1
@@ -331,11 +374,18 @@ public class MapScreen extends Screen {
                 && mouseY >= filterBtnY0 && mouseY < filterBtnY1;
         boolean overDimBtn = showDimBtn && mouseX >= dimBtnX0 && mouseX < dimBtnX1
                 && mouseY >= dimBtnY0 && mouseY < dimBtnY1;
+        boolean overFollowBtn = mouseX >= followBtnX0 && mouseX < followBtnX1
+                && mouseY >= followBtnY0 && mouseY < followBtnY1;
+        boolean overZoomOutBtn = mouseX >= zoomOutBtnX0 && mouseX < zoomOutBtnX1
+                && mouseY >= zoomOutBtnY0 && mouseY < zoomOutBtnY1;
+        boolean overZoomInBtn = mouseX >= zoomInBtnX0 && mouseX < zoomInBtnX1
+                && mouseY >= zoomInBtnY0 && mouseY < zoomInBtnY1;
         boolean overFilterPanel = hasProject && filterPanelOpen
                 && mouseX >= fpX0 && mouseX < fpX1 && mouseY >= fpY0 && mouseY < fpY1;
         boolean inAreaBar = showAreaBar && mouseY >= areaBarY0 && mouseY < areaBarY1;
         boolean inMap = mouseY >= mapY0 && mouseY < mapY1
-                && !inAreaBar && !overPinBtn && !overFilterBtn && !overDimBtn && !overFilterPanel;
+                && !inAreaBar && !overPinBtn && !overFilterBtn && !overDimBtn
+                && !overFollowBtn && !overZoomOutBtn && !overZoomInBtn && !overFilterPanel;
 
         dev = Math.max(1.0, (double) mc.getWindow().getWidth() / (double) this.width);
         clipX0 = (int) Math.round(mapX0 * dev);
@@ -570,6 +620,10 @@ public class MapScreen extends Screen {
 
         g.disableScissor();
 
+        drawZoomButtonIcon(g, zoomInBtnX0, zoomInBtnY0, zoomInBtnX1, zoomInBtnY1, true, overZoomInBtn, scale < MAX_SCALE);
+        drawZoomButtonIcon(g, zoomOutBtnX0, zoomOutBtnY0, zoomOutBtnX1, zoomOutBtnY1, false, overZoomOutBtn, scale > MIN_SCALE);
+        drawFollowToggleIcon(g, overFollowBtn);
+
         if (showDimBtn) {
             drawDimToggleIcon(g, overDimBtn);
         }
@@ -685,6 +739,13 @@ public class MapScreen extends Screen {
 
         if (hoverDbBtn) {
             drawSimpleTooltip(g, List.of(Lang.s("db.title_short")), List.of(0xFFFFFFFF), mouseX, mouseY);
+        } else if (overZoomInBtn) {
+            drawSimpleTooltip(g, List.of(Lang.s("map.zoom_in_tip")), List.of(0xFFFFFFFF), mouseX, mouseY);
+        } else if (overZoomOutBtn) {
+            drawSimpleTooltip(g, List.of(Lang.s("map.zoom_out_tip")), List.of(0xFFFFFFFF), mouseX, mouseY);
+        } else if (overFollowBtn) {
+            String tip = Lang.s("map.follow_tip", followPlayer ? Lang.s("common.on") : Lang.s("common.off"));
+            drawSimpleTooltip(g, List.of(tip), List.of(followPlayer ? 0xFF38D8FF : 0xFFFFFFFF), mouseX, mouseY);
         } else if (overDimBtn) {
             String tip = Lang.s("map.dim_toggle_tip",
                     AreaPlan.isDimOutside() ? Lang.s("common.on") : Lang.s("common.off"));
@@ -709,6 +770,45 @@ public class MapScreen extends Screen {
         } else if (hoveredPin != null) {
             drawPinTooltip(g, hoveredPin, mouseX, mouseY);
         }
+    }
+
+    private void drawZoomButtonIcon(GuiGraphicsExtractor g, int x0, int y0, int x1, int y1,
+                                    boolean plus, boolean hover, boolean enabled) {
+        int border = hover && enabled ? 0xFFFFFFFF : 0xFF3A3A48;
+        int bg = hover && enabled ? 0xF0262A34 : 0xE014161C;
+        g.fill(x0 - 1, y0 - 1, x1 + 1, y1 + 1, border);
+        g.fill(x0, y0, x1, y1, bg);
+
+        int cx = (x0 + x1) / 2;
+        int cy = (y0 + y1) / 2;
+        int col = enabled ? 0xFFFFFFFF : 0xFF555B6A;
+        g.fill(cx - 5, cy - 1, cx + 5, cy + 1, col);
+        if (plus) {
+            g.fill(cx - 1, cy - 5, cx + 1, cy + 5, col);
+        }
+    }
+
+    private void drawFollowToggleIcon(GuiGraphicsExtractor g, boolean hover) {
+        int border = followPlayer ? 0xFF38D8FF : hover ? 0xFFFFFFFF : 0xFF3A3A48;
+        int bg = followPlayer ? 0xF01C2836 : hover ? 0xF0262A34 : 0xE014161C;
+        g.fill(followBtnX0 - 1, followBtnY0 - 1, followBtnX1 + 1, followBtnY1 + 1, border);
+        g.fill(followBtnX0, followBtnY0, followBtnX1, followBtnY1, bg);
+
+        int cx = (followBtnX0 + followBtnX1) / 2;
+        int cy = (followBtnY0 + followBtnY1) / 2;
+        int col = followPlayer ? 0xFF38D8FF : hover ? 0xFFFFFFFF : 0xFF9AA0B0;
+
+        g.fill(cx - 4, cy - 5, cx + 4, cy - 4, col);
+        g.fill(cx - 4, cy + 4, cx + 4, cy + 5, col);
+        g.fill(cx - 5, cy - 4, cx - 4, cy + 4, col);
+        g.fill(cx + 4, cy - 4, cx + 5, cy + 4, col);
+
+        g.fill(cx - 1, cy - 7, cx + 1, cy - 5, col);
+        g.fill(cx - 1, cy + 5, cx + 1, cy + 7, col);
+        g.fill(cx - 7, cy - 1, cx - 5, cy + 1, col);
+        g.fill(cx + 5, cy - 1, cx + 7, cy + 1, col);
+
+        g.fill(cx - 2, cy - 2, cx + 2, cy + 2, followPlayer ? 0xFFFFFFFF : col);
     }
 
     private void drawFilterToggleIcon(GuiGraphicsExtractor g, boolean hover) {
@@ -1581,20 +1681,30 @@ public class MapScreen extends Screen {
         if (filterSearchBox != null && filterSearchBox.isFocused() && filterSearchBox.canConsumeInput()) {
             return super.keyPressed(event);
         }
-        if (System.currentTimeMillis() - openedAtMs >= 180L
-                && !(this.getFocused() instanceof EditBox eb && eb.canConsumeInput())) {
-            if (ChunkVaultClient.matchesOpenMap(event)) {
-                this.onClose();
+        if (!(this.getFocused() instanceof EditBox eb && eb.canConsumeInput())) {
+            int key = event.key();
+            if (key == InputConstants.KEY_EQUALS || key == InputConstants.KEY_ADD) {
+                zoomCenter(1.25);
                 return true;
             }
-            if (ChunkVaultClient.matchesToggleRecord(event)) {
-                toggleRecording();
+            if (key == InputConstants.KEY_MINUS || key == InputConstants.KEY_SUBTRACT) {
+                zoomCenter(0.8);
                 return true;
             }
-            if (ChunkVaultClient.matchesToggleHud(event)) {
-                boolean on = AreaPlan.toggleHud();
-                showToast(Lang.s("area.btn_hud", on ? Lang.s("common.on") : Lang.s("common.off")));
-                return true;
+            if (System.currentTimeMillis() - openedAtMs >= 180L) {
+                if (ChunkVaultClient.matchesOpenMap(event)) {
+                    this.onClose();
+                    return true;
+                }
+                if (ChunkVaultClient.matchesToggleRecord(event)) {
+                    toggleRecording();
+                    return true;
+                }
+                if (ChunkVaultClient.matchesToggleHud(event)) {
+                    boolean on = AreaPlan.toggleHud();
+                    showToast(Lang.s("area.btn_hud", on ? Lang.s("common.on") : Lang.s("common.off")));
+                    return true;
+                }
             }
         }
         return super.keyPressed(event);
@@ -1610,6 +1720,30 @@ public class MapScreen extends Screen {
         }
 
         unfocusFilterSearch();
+
+        if (mx >= zoomInBtnX0 && mx < zoomInBtnX1 && my >= zoomInBtnY0 && my < zoomInBtnY1) {
+            if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+                zoomCenter(1.25);
+                return true;
+            }
+        }
+
+        if (mx >= zoomOutBtnX0 && mx < zoomOutBtnX1 && my >= zoomOutBtnY0 && my < zoomOutBtnY1) {
+            if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+                zoomCenter(0.8);
+                return true;
+            }
+        }
+
+        if (mx >= followBtnX0 && mx < followBtnX1 && my >= followBtnY0 && my < followBtnY1) {
+            if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+                followPlayer = !followPlayer;
+                if (followPlayer) {
+                    recenterOnPlayer();
+                }
+                return true;
+            }
+        }
 
         if (filterBtnX1 > filterBtnX0 && mx >= filterBtnX0 && mx < filterBtnX1 && my >= filterBtnY0 && my < filterBtnY1) {
             if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
@@ -1839,6 +1973,7 @@ public class MapScreen extends Screen {
         if (event.button() == InputConstants.MOUSE_BUTTON_LEFT && draggingMap) {
             if (!dragged && Math.hypot(event.x() - dragStartX, event.y() - dragStartY) >= 4.0) {
                 dragged = true;
+                followPlayer = false;
             }
             centerX -= dragX / scale;
             centerZ -= dragY / scale;
@@ -1886,6 +2021,10 @@ public class MapScreen extends Screen {
             return false;
         }
         if (filterPanelOpen && fpX1 > fpX0 && mouseX >= fpX0 && mouseX < fpX1 && mouseY >= fpY0 && mouseY < fpY1) {
+            return true;
+        }
+        if (followPlayer) {
+            zoomCenter(scrollY > 0 ? 1.25 : 0.8);
             return true;
         }
         double mapCX = this.width / 2.0;
