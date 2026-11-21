@@ -18,6 +18,7 @@ import com.chunkvault.state.ChunkVaultSettings;
 import com.chunkvault.state.DirtyChunkTracker;
 import com.chunkvault.state.LastInteraction;
 import com.chunkvault.state.RecordingState;
+import com.chunkvault.state.UiInputGuard;
 import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
@@ -185,6 +186,7 @@ public class ChunkVaultClient implements ClientModInitializer {
                 LastInteraction.clear();
                 AreaEtaTracker.reset();
                 DirtyChunkTracker.clear();
+                UiInputGuard.clear();
                 if (RecordingState.get().isActive()) {
                     stopRecordingSync();
                 } else {
@@ -394,7 +396,7 @@ public class ChunkVaultClient implements ClientModInitializer {
         if (player != null && level != null) {
             uuid = Minecraft.getInstance().getUser().getProfileId();
             playerTag = PlayerDataWriter.buildPlayerTag(
-                    player, level, ChunkVaultSettings.get().savePlayerInventory());
+                    player, level, ChunkVaultSettings.get().savePlayerInventory(), ChunkVaultSettings.get().saveEnderChest());
         }
 
         LastInteraction.clear();
@@ -430,7 +432,7 @@ public class ChunkVaultClient implements ClientModInitializer {
         if (player != null && level != null) {
             uuid = Minecraft.getInstance().getUser().getProfileId();
             playerTag = PlayerDataWriter.buildPlayerTag(
-                    player, level, ChunkVaultSettings.get().savePlayerInventory());
+                    player, level, ChunkVaultSettings.get().savePlayerInventory(), ChunkVaultSettings.get().saveEnderChest());
         }
 
         LastInteraction.clear();
