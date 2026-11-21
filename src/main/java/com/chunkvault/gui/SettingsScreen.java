@@ -1,5 +1,6 @@
 package com.chunkvault.gui;
 
+import com.chunkvault.ChunkVaultClient;
 import com.chunkvault.Lang;
 import com.chunkvault.save.ContainerDatabase;
 import com.chunkvault.state.AutoRecord;
@@ -10,6 +11,7 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 
 public class SettingsScreen extends Screen {
@@ -23,6 +25,7 @@ public class SettingsScreen extends Screen {
 
     private final String serverKey = AutoRecord.serverKey();
     private final Screen parent;
+    private final long openedAtMs = System.currentTimeMillis();
 
     private EditBox seedBox;
     private String seedText;
@@ -83,6 +86,17 @@ public class SettingsScreen extends Screen {
             ChunkVaultSettings.get().setSeed(seed);
         } catch (NumberFormatException ignored) {
         }
+    }
+
+    @Override
+    public boolean keyPressed(KeyEvent event) {
+        if (System.currentTimeMillis() - openedAtMs >= 180L
+                && !(this.getFocused() instanceof EditBox eb && eb.canConsumeInput())
+                && ChunkVaultClient.matchesOpenSettings(event)) {
+            this.onClose();
+            return true;
+        }
+        return super.keyPressed(event);
     }
 
     @Override
