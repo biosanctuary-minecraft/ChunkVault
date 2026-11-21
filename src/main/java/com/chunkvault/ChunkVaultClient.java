@@ -13,6 +13,7 @@ import com.chunkvault.save.VoidWorldGenBuilder;
 import com.chunkvault.state.AreaEtaTracker;
 import com.chunkvault.state.AreaPlan;
 import com.chunkvault.state.AutoRecord;
+import com.chunkvault.state.DirtyChunkTracker;
 import com.chunkvault.state.LastInteraction;
 import com.chunkvault.state.RecordingState;
 import com.mojang.blaze3d.platform.InputConstants;
@@ -165,15 +166,19 @@ public class ChunkVaultClient implements ClientModInitializer {
         AreaHudOverlay.register();
 
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
-            LastInteraction.clear();
-            AreaEtaTracker.reset();
-            if (!RecordingState.get().isActive()) {
-                return;
-            }
+            Runnable cleanup = () -> {
+                LastInteraction.clear();
+                AreaEtaTracker.reset();
+                DirtyChunkTracker.clear();
+                if (RecordingState.get().isActive()) {
+                    stopRecording();
+                }
+                ProjectMap.close();
+            };
             if (client.isSameThread()) {
-                stopRecording();
+                cleanup.run();
             } else {
-                client.execute(ChunkVaultClient::stopRecording);
+                client.execute(cleanup);
             }
         });
 
@@ -284,7 +289,7 @@ public class ChunkVaultClient implements ClientModInitializer {
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
                 dispatcher.register(literal("chunkvault")
                         .then(literal("start")
-                                .then(argument("name", StringArgumentType.word())
+                                .then(argument("name", StringArgumentType.greedyString())
                                         .executes(ctx -> start(ctx.getSource(), StringArgumentType.getString(ctx, "name")))))
                         .then(literal("stop").executes(ctx -> stop(ctx.getSource())))
                         .then(literal("status").executes(ctx -> status(ctx.getSource())))
@@ -313,7 +318,7 @@ public class ChunkVaultClient implements ClientModInitializer {
                                 .then(literal("clip").executes(ctx -> areaClip(ctx.getSource())))
                                 .then(literal("trim").executes(ctx -> areaTrim(ctx.getSource()))))
                         .then(literal("fixworld")
-                                .then(argument("name", StringArgumentType.word())
+                                .then(argument("name", StringArgumentType.greedyString())
                                         .executes(ctx -> fixWorld(ctx.getSource(), StringArgumentType.getString(ctx, "name")))))
                 )
         );
@@ -324,6 +329,7 @@ public class ChunkVaultClient implements ClientModInitializer {
         if (!RecordingState.get().start(gameDir, name)) {
             return -1;
         }
+        DirtyChunkTracker.clear();
         ProjectMap.ensureOpen(RecordingState.sanitize(name));
         AreaPlan.resetAutoStopTrigger();
         var level = Minecraft.getInstance().level;
@@ -370,6 +376,7 @@ public class ChunkVaultClient implements ClientModInitializer {
         }
 
         LastInteraction.clear();
+        DirtyChunkTracker.clear();
         Path dir = RecordingState.get().stop(spawnPos, uuid, playerTag);
         ProjectMap.save();
         return new StopResult(chunks, chests, entities, dir);
