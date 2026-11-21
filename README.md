@@ -2,7 +2,7 @@
 
 **ChunkVault records the world you explore on a multiplayer server into a normal singleplayer save.** Walk around, open chests, plan your scan area, search saved storage, and play the result later — with or without the mod installed.
 
-[https://raw.githubusercontent.com/biosanctuary-minecraft/ChunkVault/main/docs/map-preview.jpg]
+<img width="1280" height="720" alt="photo_2026-11-20_22-16-41" src="https://github.com/user-attachments/assets/4463d06c-e1ee-4297-8127-b97cf0e865bd" />
 
 ## Features
 
