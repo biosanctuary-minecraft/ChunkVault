@@ -162,6 +162,8 @@
   "chunkvault.settings.row.containers.desc": "Record contents of opened chests, shulkers & more",
   "chunkvault.settings.row.unopened": "Show unopened containers",
   "chunkvault.settings.row.unopened.desc": "Display unopened containers on the map & in DB",
+  "chunkvault.settings.row.player_inventory": "Save player inventory",
+  "chunkvault.settings.row.player_inventory.desc": "Save your hotbar, inventory & equipped gear on stop",
   "chunkvault.settings.row.mobs": "Mob spawning in saved world",
   "chunkvault.settings.row.mobs.desc": "Block or allow natural mob spawns in exported worlds",
   "chunkvault.settings.row.gen": "Outside recorded area",
