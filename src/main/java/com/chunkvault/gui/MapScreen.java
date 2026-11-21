@@ -38,7 +38,7 @@ public class MapScreen extends Screen {
     private static final double MAX_SCALE = 16.0;
     private static final int RECT_BUDGET = 9000;
     private static final int FILTER_PANEL_W = 230;
-    private static final int FILTER_PANEL_H = 190;
+    private static final int FILTER_PANEL_H = 176;
 
     private static double lastScale = 1.0;
     private static boolean showPins = true;
@@ -199,6 +199,10 @@ public class MapScreen extends Screen {
         filterSearchBox.setResponder(MapPinFilter::setSearchQuery);
         filterSearchBox.setVisible(filterPanelOpen && ProjectMap.isOpen());
         this.addWidget(filterSearchBox);
+    }
+
+    public boolean isTypingInSearch() {
+        return filterSearchBox != null && filterSearchBox.isFocused() && filterSearchBox.canConsumeInput();
     }
 
     private void unfocusFilterSearch() {
@@ -912,6 +916,7 @@ public class MapScreen extends Screen {
                 Lang.s("map.filter.type.chests"),
                 Lang.s("map.filter.type.barrels"),
                 Lang.s("map.filter.type.shulkers"),
+                Lang.s("map.filter.type.ender"),
                 Lang.s("map.filter.type.hoppers"),
                 Lang.s("map.filter.type.dispensers"),
                 Lang.s("map.filter.type.furnaces"),
@@ -922,23 +927,26 @@ public class MapScreen extends Screen {
                 MapPinFilter.chests(),
                 MapPinFilter.barrels(),
                 MapPinFilter.shulkers(),
+                MapPinFilter.enderChests(),
                 MapPinFilter.hoppers(),
                 MapPinFilter.dispensers(),
                 MapPinFilter.furnaces(),
                 MapPinFilter.brewing(),
                 MapPinFilter.crafters()
         };
-        for (int i = 0; i < 8; i++) {
-            int col = i & 1;
-            int row = i >> 1;
-            int px0 = col == 0 ? innerX0 : innerX0 + halfW + 4;
-            int px1 = col == 0 ? innerX0 + halfW : innerX1;
+        int colW = (innerW - 6) / 3;
+        for (int i = 0; i < 9; i++) {
+            int col = i % 3;
+            int row = i / 3;
+            int px0 = innerX0 + col * (colW + 3);
+            int px1 = col == 2 ? innerX1 : px0 + colW;
             int py0 = fpTypesY0 + row * 17;
             int py1 = py0 + 15;
-            drawFilterPill(g, px0, px1, py0, py1, typeLabels[i], typeActive[i], 0xFF1F6A7A, mouseX, mouseY);
+            int pillBg = i == 3 ? 0xFF1A7A70 : 0xFF1F6A7A;
+            drawFilterPill(g, px0, px1, py0, py1, typeLabels[i], typeActive[i], pillBg, mouseX, mouseY);
         }
 
-        int shulkerHeaderY = fpTypesY0 + 4 * 17 + 3;
+        int shulkerHeaderY = fpTypesY0 + 3 * 17 + 4;
         g.text(this.font, Lang.s("map.filter.shulker_colors"), innerX0, shulkerHeaderY + 2, 0xFF9AA0B0, true);
 
         String noneTxt = Lang.s("map.filter.none");
@@ -1067,27 +1075,32 @@ public class MapScreen extends Screen {
             }
         }
 
-        if (btn == InputConstants.MOUSE_BUTTON_LEFT && my >= fpTypesY0 && my < fpTypesY0 + 4 * 17) {
+        if (btn == InputConstants.MOUSE_BUTTON_LEFT && my >= fpTypesY0 && my < fpTypesY0 + 3 * 17) {
             int row = (int) ((my - fpTypesY0) / 17);
             double localY = (my - fpTypesY0) - row * 17;
-            if (row >= 0 && row < 4 && localY < 15) {
+            if (row >= 0 && row < 3 && localY < 15) {
+                int colW = (innerW - 6) / 3;
                 int col = -1;
-                if (mx >= innerX0 && mx < innerX0 + halfW) {
-                    col = 0;
-                } else if (mx >= innerX0 + halfW + 4 && mx < innerX1) {
-                    col = 1;
+                for (int c = 0; c < 3; c++) {
+                    int px0 = innerX0 + c * (colW + 3);
+                    int px1 = c == 2 ? innerX1 : px0 + colW;
+                    if (mx >= px0 && mx < px1) {
+                        col = c;
+                        break;
+                    }
                 }
                 if (col >= 0) {
-                    int idx = row * 2 + col;
+                    int idx = row * 3 + col;
                     switch (idx) {
                         case 0 -> MapPinFilter.toggleChests();
                         case 1 -> MapPinFilter.toggleBarrels();
                         case 2 -> MapPinFilter.toggleShulkers();
-                        case 3 -> MapPinFilter.toggleHoppers();
-                        case 4 -> MapPinFilter.toggleDispensers();
-                        case 5 -> MapPinFilter.toggleFurnaces();
-                        case 6 -> MapPinFilter.toggleBrewing();
-                        case 7 -> MapPinFilter.toggleCrafters();
+                        case 3 -> MapPinFilter.toggleEnderChests();
+                        case 4 -> MapPinFilter.toggleHoppers();
+                        case 5 -> MapPinFilter.toggleDispensers();
+                        case 6 -> MapPinFilter.toggleFurnaces();
+                        case 7 -> MapPinFilter.toggleBrewing();
+                        case 8 -> MapPinFilter.toggleCrafters();
                         default -> {}
                     }
                     return true;
