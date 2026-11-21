@@ -25,8 +25,8 @@ import java.util.Map;
 
 public final class MinimapOverlay {
 
-    private static final int FOOTER_H = 14;
-    private static final int PAD = 8;
+    static final int FOOTER_H = 14;
+    static final int PAD = 8;
 
     private static long frame;
     private static int clipX0;
@@ -53,53 +53,52 @@ public final class MinimapOverlay {
         );
     }
 
+    static int resolveX(int screenW, int mapSize, double rx) {
+        int avail = Math.max(0, screenW - mapSize - PAD * 2);
+        return PAD + (int) Math.round(Math.max(0.0, Math.min(1.0, rx)) * avail);
+    }
+
+    static int resolveY(int screenH, int mapSize, double ry) {
+        int totalH = mapSize + FOOTER_H;
+        int avail = Math.max(0, screenH - totalH - PAD * 2);
+        return PAD + (int) Math.round(Math.max(0.0, Math.min(1.0, ry)) * avail);
+    }
+
     private static void extract(GuiGraphicsExtractor g, DeltaTracker deltaTracker) {
         Minecraft mc = Minecraft.getInstance();
-        LocalPlayer player = mc.player;
-        ClientLevel level = mc.level;
-        if (player == null || level == null || mc.gui.hud.isHidden()) {
+        if (mc.player == null || mc.level == null || mc.gui.hud.isHidden()) {
             return;
         }
         ChunkVaultSettings settings = ChunkVaultSettings.get();
         if (!settings.minimapEnabled() || !ProjectMap.isOpen()) {
             return;
         }
-
-        frame++;
         int screenW = mc.getWindow().getGuiScaledWidth();
         int screenH = mc.getWindow().getGuiScaledHeight();
         int mapSize = settings.minimapSize();
-        int totalH = mapSize + FOOTER_H;
+        int x0 = resolveX(screenW, mapSize, settings.minimapX());
+        int y0 = resolveY(screenH, mapSize, settings.minimapY());
+        float partialTick = deltaTracker.getGameTimeDeltaPartialTick(true);
+        renderAt(g, partialTick, x0, y0, mapSize, settings.minimapZoom(), false);
+    }
 
-        int x0;
-        int y0;
-        switch (settings.minimapPosition()) {
-            case TOP_RIGHT -> {
-                x0 = Math.max(PAD, screenW - mapSize - PAD);
-                y0 = PAD;
-                if (AreaPlan.isActive() && AreaPlan.isHudVisible()) {
-                    y0 += 76;
-                }
-            }
-            case BOTTOM_LEFT -> {
-                x0 = PAD;
-                y0 = Math.max(PAD, screenH - totalH - PAD);
-            }
-            case BOTTOM_RIGHT -> {
-                x0 = Math.max(PAD, screenW - mapSize - PAD);
-                y0 = Math.max(PAD, screenH - totalH - PAD);
-            }
-            default -> {
-                x0 = PAD;
-                y0 = PAD;
-            }
+    static void renderAt(GuiGraphicsExtractor g, float partialTick, int x0, int y0,
+                         int mapSize, double scale, boolean previewMode) {
+        Minecraft mc = Minecraft.getInstance();
+        LocalPlayer player = mc.player;
+        ClientLevel level = mc.level;
+        if (player == null || level == null) {
+            return;
         }
 
+        frame++;
+        int screenW = mc.getWindow().getGuiScaledWidth();
         int x1 = x0 + mapSize;
         int y1 = y0 + mapSize;
         int fy1 = y1 + FOOTER_H;
 
-        g.fill(x0 - 1, y0 - 1, x1 + 1, fy1 + 1, 0xFF3A3A48);
+        int borderCol = previewMode ? 0xFF38D8FF : 0xFF3A3A48;
+        g.fill(x0 - 1, y0 - 1, x1 + 1, fy1 + 1, borderCol);
         g.fill(x0, y0, x1, y1, 0xE80B0B0F);
 
         double dev = Math.max(1.0, (double) mc.getWindow().getWidth() / (double) screenW);
@@ -108,15 +107,14 @@ public final class MinimapOverlay {
         clipX1 = (int) Math.round(x1 * dev);
         clipY1 = (int) Math.round(y1 * dev);
 
-        float partialTick = deltaTracker.getGameTimeDeltaPartialTick(true);
         var pos = player.getPosition(partialTick);
         double centerX = pos.x();
         double centerZ = pos.z();
-        double scale = settings.minimapZoom();
         double mapCX = x0 + mapSize / 2.0;
         double mapCY = y0 + mapSize / 2.0;
 
         String dimensionId = level.dimension().identifier().toString();
+        boolean hasProject = ProjectMap.isOpen();
         Map<Long, MapCache.ChunkColors> cache = ProjectMap.forDimension(dimensionId);
 
         var manager = RecordingState.get().saveManager();
@@ -142,34 +140,36 @@ public final class MinimapOverlay {
         g.pose().pushMatrix();
         g.pose().scale(inv, inv);
 
-        if (useTex) {
-            drawTerrain(g, dimensionId, cache, mapCX, mapCY, centerX, centerZ, scale, dev, minCx, maxCx, minCz, maxCz);
-        } else {
-            double ppcDev = scale * 16.0 * dev;
-            for (int cz = minCz; cz <= maxCz; cz++) {
-                for (int cx = minCx; cx <= maxCx; cx++) {
-                    MapCache.ChunkColors c = cache.get(MapCache.key(cx, cz));
-                    if (c != null && c.avg != 0) {
-                        int sx0 = (int) Math.round((mapCX + (cx * 16.0 - centerX) * scale) * dev);
-                        int sy0 = (int) Math.round((mapCY + (cz * 16.0 - centerZ) * scale) * dev);
-                        int sx1 = (int) Math.round(sx0 + ppcDev);
-                        int sy1 = (int) Math.round(sy0 + ppcDev);
-                        fillI(g, sx0, sy0, Math.max(sx0 + 1, sx1), Math.max(sy0 + 1, sy1), c.avg);
+        if (hasProject) {
+            if (useTex) {
+                drawTerrain(g, dimensionId, cache, mapCX, mapCY, centerX, centerZ, scale, dev, minCx, maxCx, minCz, maxCz);
+            } else {
+                double ppcDev = scale * 16.0 * dev;
+                for (int cz = minCz; cz <= maxCz; cz++) {
+                    for (int cx = minCx; cx <= maxCx; cx++) {
+                        MapCache.ChunkColors c = cache.get(MapCache.key(cx, cz));
+                        if (c != null && c.avg != 0) {
+                            int sx0 = (int) Math.round((mapCX + (cx * 16.0 - centerX) * scale) * dev);
+                            int sy0 = (int) Math.round((mapCY + (cz * 16.0 - centerZ) * scale) * dev);
+                            int sx1 = (int) Math.round(sx0 + ppcDev);
+                            int sy1 = (int) Math.round(sy0 + ppcDev);
+                            fillI(g, sx0, sy0, Math.max(sx0 + 1, sx1), Math.max(sy0 + 1, sy1), c.avg);
+                        }
                     }
                 }
             }
-        }
 
-        if (AreaPlan.isActive() && dimensionId.equals(AreaPlan.dimension())) {
-            int bx0 = (int) Math.round((mapCX + (AreaPlan.minCx() * 16.0 - centerX) * scale) * dev);
-            int bx1 = (int) Math.round((mapCX + ((AreaPlan.maxCx() + 1) * 16.0 - centerX) * scale) * dev);
-            int by0 = (int) Math.round((mapCY + (AreaPlan.minCz() * 16.0 - centerZ) * scale) * dev);
-            int by1 = (int) Math.round((mapCY + ((AreaPlan.maxCz() + 1) * 16.0 - centerZ) * scale) * dev);
-            int t = Math.max(1, (int) Math.round(dev));
-            fillI(g, bx0, by0, bx1, by0 + t, 0xEE38D8FF);
-            fillI(g, bx0, by1 - t, bx1, by1, 0xEE38D8FF);
-            fillI(g, bx0, by0, bx0 + t, by1, 0xEE38D8FF);
-            fillI(g, bx1 - t, by0, bx1, by1, 0xEE38D8FF);
+            if (AreaPlan.isActive() && dimensionId.equals(AreaPlan.dimension())) {
+                int bx0 = (int) Math.round((mapCX + (AreaPlan.minCx() * 16.0 - centerX) * scale) * dev);
+                int bx1 = (int) Math.round((mapCX + ((AreaPlan.maxCx() + 1) * 16.0 - centerX) * scale) * dev);
+                int by0 = (int) Math.round((mapCY + (AreaPlan.minCz() * 16.0 - centerZ) * scale) * dev);
+                int by1 = (int) Math.round((mapCY + ((AreaPlan.maxCz() + 1) * 16.0 - centerZ) * scale) * dev);
+                int t = Math.max(1, (int) Math.round(dev));
+                fillI(g, bx0, by0, bx1, by0 + t, 0xEE38D8FF);
+                fillI(g, bx0, by1 - t, bx1, by1, 0xEE38D8FF);
+                fillI(g, bx0, by0, bx0 + t, by1, 0xEE38D8FF);
+                fillI(g, bx1 - t, by0, bx1, by1, 0xEE38D8FF);
+            }
         }
 
         if (recording && zoneCount > 0) {
@@ -212,7 +212,9 @@ public final class MinimapOverlay {
             }
         }
 
-        drawPins(g, dimensionId, mapCX, mapCY, centerX, centerZ, scale, dev, minCx, maxCx, minCz, maxCz);
+        if (hasProject) {
+            drawPins(g, dimensionId, mapCX, mapCY, centerX, centerZ, scale, dev, minCx, maxCx, minCz, maxCz);
+        }
 
         double pcx = mapCX * dev;
         double pcy = mapCY * dev;
