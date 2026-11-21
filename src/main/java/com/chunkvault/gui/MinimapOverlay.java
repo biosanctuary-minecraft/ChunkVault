@@ -34,6 +34,12 @@ public final class MinimapOverlay {
     private static int clipX1;
     private static int clipY1;
 
+    private static boolean camInit;
+    private static double camX;
+    private static double camZ;
+    private static String camDim = "";
+    private static long lastRenderNs;
+
     private static int[] zoneX0 = new int[256];
     private static int[] zoneX1 = new int[256];
     private static int[] zoneZ = new int[256];
@@ -107,13 +113,32 @@ public final class MinimapOverlay {
         clipX1 = (int) Math.round(x1 * dev);
         clipY1 = (int) Math.round(y1 * dev);
 
+        String dimensionId = level.dimension().identifier().toString();
         var pos = player.getPosition(partialTick);
-        double centerX = pos.x();
-        double centerZ = pos.z();
+        double targetX = pos.x();
+        double targetZ = pos.z();
+
+        long nowNs = System.nanoTime();
+        double dt = lastRenderNs == 0L ? 0.0 : Math.min(0.1, (nowNs - lastRenderNs) * 1.0e-9);
+        lastRenderNs = nowNs;
+
+        if (!camInit || !dimensionId.equals(camDim)
+                || Math.hypot(targetX - camX, targetZ - camZ) > 64.0) {
+            camX = targetX;
+            camZ = targetZ;
+            camDim = dimensionId;
+            camInit = true;
+        } else if (dt > 0.0) {
+            double alpha = 1.0 - Math.exp(-22.0 * dt);
+            camX += (targetX - camX) * alpha;
+            camZ += (targetZ - camZ) * alpha;
+        }
+
+        double centerX = camX;
+        double centerZ = camZ;
         double mapCX = x0 + mapSize / 2.0;
         double mapCY = y0 + mapSize / 2.0;
 
-        String dimensionId = level.dimension().identifier().toString();
         boolean hasProject = ProjectMap.isOpen();
         Map<Long, MapCache.ChunkColors> cache = ProjectMap.forDimension(dimensionId);
 
@@ -140,15 +165,6 @@ public final class MinimapOverlay {
         g.pose().pushMatrix();
         g.pose().scale(inv, inv);
 
-        double snapDx = 0.0;
-        double snapDy = 0.0;
-        if (hasProject && useTex) {
-            double rawOffX = (mapCX + ((minCx >> 4) * 256.0 - centerX) * scale) * dev;
-            double rawOffY = (mapCY + ((minCz >> 4) * 256.0 - centerZ) * scale) * dev;
-            snapDx = Math.round(rawOffX) - rawOffX;
-            snapDy = Math.round(rawOffY) - rawOffY;
-        }
-
         if (hasProject) {
             if (useTex) {
                 drawTerrain(g, dimensionId, cache, mapCX, mapCY, centerX, centerZ, scale, dev, minCx, maxCx, minCz, maxCz);
@@ -169,15 +185,19 @@ public final class MinimapOverlay {
             }
 
             if (AreaPlan.isActive() && dimensionId.equals(AreaPlan.dimension())) {
-                int bx0 = (int) Math.round((mapCX + (AreaPlan.minCx() * 16.0 - centerX) * scale) * dev + snapDx);
-                int bx1 = (int) Math.round((mapCX + ((AreaPlan.maxCx() + 1) * 16.0 - centerX) * scale) * dev + snapDx);
-                int by0 = (int) Math.round((mapCY + (AreaPlan.minCz() * 16.0 - centerZ) * scale) * dev + snapDy);
-                int by1 = (int) Math.round((mapCY + ((AreaPlan.maxCz() + 1) * 16.0 - centerZ) * scale) * dev + snapDy);
+                double bx0 = (mapCX + (AreaPlan.minCx() * 16.0 - centerX) * scale) * dev;
+                double bx1 = (mapCX + ((AreaPlan.maxCx() + 1) * 16.0 - centerX) * scale) * dev;
+                double by0 = (mapCY + (AreaPlan.minCz() * 16.0 - centerZ) * scale) * dev;
+                double by1 = (mapCY + ((AreaPlan.maxCz() + 1) * 16.0 - centerZ) * scale) * dev;
                 int t = Math.max(1, (int) Math.round(dev));
-                fillI(g, bx0, by0, bx1, by0 + t, 0xEE38D8FF);
-                fillI(g, bx0, by1 - t, bx1, by1, 0xEE38D8FF);
-                fillI(g, bx0, by0, bx0 + t, by1, 0xEE38D8FF);
-                fillI(g, bx1 - t, by0, bx1, by1, 0xEE38D8FF);
+                int ix0 = (int) Math.round(bx0);
+                int ix1 = (int) Math.round(bx1);
+                int iy0 = (int) Math.round(by0);
+                int iy1 = (int) Math.round(by1);
+                fillI(g, ix0, iy0, ix1, iy0 + t, 0xEE38D8FF);
+                fillI(g, ix0, iy1 - t, ix1, iy1, 0xEE38D8FF);
+                fillI(g, ix0, iy0, ix0 + t, iy1, 0xEE38D8FF);
+                fillI(g, ix1 - t, iy0, ix1, iy1, 0xEE38D8FF);
             }
         }
 
@@ -222,11 +242,11 @@ public final class MinimapOverlay {
         }
 
         if (hasProject) {
-            drawPins(g, dimensionId, mapCX, mapCY, centerX, centerZ, scale, dev, snapDx, snapDy, minCx, maxCx, minCz, maxCz);
+            drawPins(g, dimensionId, mapCX, mapCY, centerX, centerZ, scale, dev, minCx, maxCx, minCz, maxCz);
         }
 
-        double pcx = mapCX * dev;
-        double pcy = mapCY * dev;
+        double pcx = (mapCX + (targetX - centerX) * scale) * dev;
+        double pcy = (mapCY + (targetZ - centerZ) * scale) * dev;
         double yaw = Math.toRadians(player.getViewYRot(partialTick));
         drawArrow(g, pcx, pcy, -Math.sin(yaw), Math.cos(yaw), 2.2 * dev + 3.0);
 
@@ -249,7 +269,7 @@ public final class MinimapOverlay {
         }
         g.text(font, statusText, statusX, textY, statusColor, true);
 
-        String coords = (int) Math.floor(centerX) + ", " + (int) Math.floor(centerZ);
+        String coords = (int) Math.floor(targetX) + ", " + (int) Math.floor(targetZ);
         int coordsW = font.width(coords);
         if (statusX + font.width(statusText) + 6 + coordsW <= x1 - 4) {
             g.text(font, coords, x1 - 4 - coordsW, textY, 0xFFCCCCCC, true);
@@ -269,8 +289,8 @@ public final class MinimapOverlay {
         int rMaxZ = maxCz >> 4;
         double originX = rMinX * 256.0;
         double originZ = rMinZ * 256.0;
-        double offX = Math.round((mapCX + (originX - centerX) * scale) * dev);
-        double offY = Math.round((mapCY + (originZ - centerZ) * scale) * dev);
+        double offX = (mapCX + (originX - centerX) * scale) * dev;
+        double offY = (mapCY + (originZ - centerZ) * scale) * dev;
 
         g.pose().pushMatrix();
         g.pose().translate((float) offX, (float) offY);
@@ -297,25 +317,28 @@ public final class MinimapOverlay {
 
     private static void drawPins(GuiGraphicsExtractor g, String dimensionId,
                                  double mapCX, double mapCY, double centerX, double centerZ,
-                                 double scale, double dev, double snapDx, double snapDy,
-                                 int minCx, int maxCx, int minCz, int maxCz) {
+                                 double scale, double dev, int minCx, int maxCx, int minCz, int maxCz) {
         List<ContainerDatabase.ContainerEntry> visible = ContainerDatabase.inChunkRange(dimensionId, minCx, maxCx, minCz, maxCz);
         if (visible.isEmpty()) {
             return;
         }
         int r = Math.max(1, (int) Math.round(1.6 * dev));
         int o = Math.max(1, (int) Math.round(0.8 * dev));
+        int pad = r + o + 2;
         for (ContainerDatabase.ContainerEntry e : visible) {
             if (ContainerDatabase.isSecondaryHalf(e) || !MapPinFilter.matches(e)) {
                 continue;
             }
-            int sx = (int) Math.round((mapCX + (e.x() + 0.5 - centerX) * scale) * dev + snapDx);
-            int sy = (int) Math.round((mapCY + (e.z() + 0.5 - centerZ) * scale) * dev + snapDy);
-            if (sx < clipX0 - r || sx > clipX1 + r || sy < clipY0 - r || sy > clipY1 + r) {
+            double sx = (mapCX + (e.x() + 0.5 - centerX) * scale) * dev;
+            double sy = (mapCY + (e.z() + 0.5 - centerZ) * scale) * dev;
+            if (sx < clipX0 - pad || sx > clipX1 + pad || sy < clipY0 - pad || sy > clipY1 + pad) {
                 continue;
             }
-            fillI(g, sx - r - o, sy - r - o, sx + r + o, sy + r + o, 0xD0000000);
-            fillI(g, sx - r, sy - r, sx + r, sy + r, ContainerDatabase.colorFor(e));
+            g.pose().pushMatrix();
+            g.pose().translate((float) sx, (float) sy);
+            g.fill(-r - o, -r - o, r + o, r + o, 0xD0000000);
+            g.fill(-r, -r, r, r, ContainerDatabase.colorFor(e));
+            g.pose().popMatrix();
         }
     }
 
