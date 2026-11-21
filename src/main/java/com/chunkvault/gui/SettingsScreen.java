@@ -17,7 +17,7 @@ import net.minecraft.client.input.MouseButtonEvent;
 public class SettingsScreen extends Screen {
 
     private static final int ROW_H = 28;
-    private static final int ROW_COUNT = 8;
+    private static final int ROW_COUNT = 9;
     private static final int PANEL_MAX_W = 460;
     private static final int BADGE_W = 86;
     private static final int FILTER_W = 72;
@@ -57,7 +57,7 @@ public class SettingsScreen extends Screen {
         clampScroll();
 
         int contentRight = maxScroll() > 0 ? listX1 - 8 : listX1;
-        seedBox = new EditBox(this.font, contentRight - 6 - SEED_W, listY0 + 6 * ROW_H + 4, SEED_W, 19, Lang.c("settings.seed_box"));
+        seedBox = new EditBox(this.font, contentRight - 6 - SEED_W, listY0 + 7 * ROW_H + 4, SEED_W, 19, Lang.c("settings.seed_box"));
         seedBox.setMaxLength(20);
         seedBox.setValue(seedText == null ? "" : seedText);
         seedBox.setResponder(s -> seedText = s);
@@ -123,7 +123,7 @@ public class SettingsScreen extends Screen {
         ChunkVaultSettings s = ChunkVaultSettings.get();
 
         if (seedBox != null) {
-            int sy = listY0 + 6 * ROW_H - scroll + 4;
+            int sy = listY0 + 7 * ROW_H - scroll + 4;
             boolean vis = sy >= listY0 && sy + 19 <= listY1;
             seedBox.setX(contentRight - 6 - SEED_W);
             seedBox.setY(sy);
@@ -149,19 +149,23 @@ public class SettingsScreen extends Screen {
                 Lang.s("settings.row.unopened"), Lang.s("settings.row.unopened.desc"),
                 showUnopened ? Lang.s("common.on") : Lang.s("common.off"), showUnopened);
 
-        drawToggleRow(g, 4, contentRight, mouseX, mouseY, 0xFFFF6060,
+        drawToggleRow(g, 4, contentRight, mouseX, mouseY, 0xFF55CCFF,
+                Lang.s("settings.row.player_inventory"), Lang.s("settings.row.player_inventory.desc"),
+                s.savePlayerInventory() ? Lang.s("common.on") : Lang.s("common.off"), s.savePlayerInventory());
+
+        drawToggleRow(g, 5, contentRight, mouseX, mouseY, 0xFFFF6060,
                 Lang.s("settings.row.mobs"), Lang.s("settings.row.mobs.desc"),
                 s.preventMobSpawning() ? Lang.s("settings.mobs.blocked") : Lang.s("settings.mobs.allowed"),
                 s.preventMobSpawning());
 
-        drawToggleRow(g, 5, contentRight, mouseX, mouseY, 0xFFA870FF,
+        drawToggleRow(g, 6, contentRight, mouseX, mouseY, 0xFFA870FF,
                 Lang.s("settings.row.gen"), Lang.s("settings.row.gen.desc"),
                 s.useSeed() ? Lang.s("settings.gen.seed_short") : Lang.s("settings.gen.void"),
                 s.useSeed());
 
-        drawSeedRow(g, 6, contentRight, mouseX, mouseY, s.useSeed());
+        drawSeedRow(g, 7, contentRight, mouseX, mouseY, s.useSeed());
 
-        drawActionRow(g, 7, contentRight, mouseX, mouseY, 0xFF4A90E2,
+        drawActionRow(g, 8, contentRight, mouseX, mouseY, 0xFF4A90E2,
                 Lang.s("settings.row.hotkeys"), Lang.s("settings.row.hotkeys.desc"),
                 Lang.s("settings.row.open_arrow"));
 
@@ -293,7 +297,7 @@ public class SettingsScreen extends Screen {
         if (event.button() == InputConstants.MOUSE_BUTTON_LEFT
                 && mx >= listX0 && mx < contentRight && my >= listY0 && my < listY1) {
             int idx = (int) ((my - listY0 + scroll) / ROW_H);
-            if (idx == 6) {
+            if (idx == 7) {
                 return super.mouseClicked(event, isDoubleClick);
             }
             ChunkVaultSettings s = ChunkVaultSettings.get();
@@ -328,14 +332,18 @@ public class SettingsScreen extends Screen {
                     return true;
                 }
                 case 4 -> {
-                    s.setPreventMobSpawning(!s.preventMobSpawning());
+                    s.setSavePlayerInventory(!s.savePlayerInventory());
                     return true;
                 }
                 case 5 -> {
+                    s.setPreventMobSpawning(!s.preventMobSpawning());
+                    return true;
+                }
+                case 6 -> {
                     s.setUseSeed(!s.useSeed());
                     return true;
                 }
-                case 7 -> {
+                case 8 -> {
                     applySeed();
                     Minecraft.getInstance().setScreenAndShow(new HotkeysScreen(this));
                     return true;
