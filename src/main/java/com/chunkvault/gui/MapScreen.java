@@ -1742,10 +1742,14 @@ public class MapScreen extends Screen {
                 if (!AreaPlan.isActive()) {
                     areaPanelOpen = false;
                 }
-            } else {
-                recenterOnPlayer();
+                return true;
             }
-            return true;
+            boolean inAreaBar = areaBarY1 > areaBarY0 && my >= areaBarY0 && my < areaBarY1;
+            if (my >= TOP_BAR && my < this.height - BOTTOM_BAR && !inAreaBar) {
+                recenterOnPlayer();
+                return true;
+            }
+            return false;
         }
 
         if (event.button() == InputConstants.MOUSE_BUTTON_LEFT
