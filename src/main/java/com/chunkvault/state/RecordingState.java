@@ -14,6 +14,7 @@ public final class RecordingState {
 
     private final AtomicBoolean active = new AtomicBoolean(false);
     private volatile WorldSaveManager saveManager;
+    private volatile WorldSaveManager finishingManager;
     private volatile String sessionName;
 
     private RecordingState() {}
@@ -34,10 +35,18 @@ public final class RecordingState {
         return saveManager;
     }
 
+    public void awaitFinished() {
+        WorldSaveManager m = finishingManager;
+        if (m != null) {
+            m.awaitTermination();
+        }
+    }
+
     public synchronized boolean start(Path gameDir, String name) {
         if (active.get()) {
             return false;
         }
+        awaitFinished();
         Path target = gameDir.resolve("chunkvault").resolve(sanitize(name));
         this.saveManager = new WorldSaveManager(target, gameDir, name);
         this.saveManager.init();
@@ -48,13 +57,39 @@ public final class RecordingState {
 
     public synchronized Path stop(BlockPos spawnPos, UUID uuid, CompoundTag playerTag) {
         if (!active.get()) {
+            awaitFinished();
             return null;
         }
         active.set(false);
-        Path dir = saveManager.rootDir();
-        saveManager.closeAndFinish(spawnPos, uuid, playerTag);
+        WorldSaveManager mgr = saveManager;
+        Path dir = mgr.rootDir();
         saveManager = null;
         sessionName = null;
+        mgr.closeAndFinish(spawnPos, uuid, playerTag);
+        return dir;
+    }
+
+    public synchronized Path stopAsync(BlockPos spawnPos, UUID uuid, CompoundTag playerTag, Runnable onDone) {
+        if (!active.get()) {
+            return null;
+        }
+        active.set(false);
+        WorldSaveManager mgr = saveManager;
+        Path dir = mgr.rootDir();
+        saveManager = null;
+        sessionName = null;
+        finishingManager = mgr;
+        mgr.closeAndFinishAsync(spawnPos, uuid, playerTag, () -> {
+            try {
+                if (onDone != null) {
+                    onDone.run();
+                }
+            } finally {
+                if (finishingManager == mgr) {
+                    finishingManager = null;
+                }
+            }
+        });
         return dir;
     }
 
