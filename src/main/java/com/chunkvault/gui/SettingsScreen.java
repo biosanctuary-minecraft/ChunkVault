@@ -17,9 +17,9 @@ import net.minecraft.client.input.MouseButtonEvent;
 public class SettingsScreen extends Screen {
 
     private static final int ROW_H = 28;
-    private static final int ROW_COUNT = 9;
+    private static final int ROW_COUNT = 13;
     private static final int PANEL_MAX_W = 460;
-    private static final int BADGE_W = 86;
+    private static final int BADGE_W = 96;
     private static final int FILTER_W = 72;
     private static final int SEED_W = 162;
 
@@ -86,6 +86,16 @@ public class SettingsScreen extends Screen {
             ChunkVaultSettings.get().setSeed(seed);
         } catch (NumberFormatException ignored) {
         }
+    }
+
+    private static String formatZoom(double z) {
+        if (Math.abs(z - Math.rint(z)) < 0.001) {
+            return ((int) Math.rint(z)) + "x";
+        }
+        if (Math.abs(z * 10.0 - Math.rint(z * 10.0)) < 0.001) {
+            return String.format(java.util.Locale.ROOT, "%.1fx", z);
+        }
+        return String.format(java.util.Locale.ROOT, "%.2fx", z);
     }
 
     @Override
@@ -165,7 +175,23 @@ public class SettingsScreen extends Screen {
 
         drawSeedRow(g, 7, contentRight, mouseX, mouseY, s.useSeed());
 
-        drawActionRow(g, 8, contentRight, mouseX, mouseY, 0xFF4A90E2,
+        drawToggleRow(g, 8, contentRight, mouseX, mouseY, 0xFF38D8FF,
+                Lang.s("settings.row.minimap"), Lang.s("settings.row.minimap.desc"),
+                s.minimapEnabled() ? Lang.s("common.on") : Lang.s("common.off"), s.minimapEnabled());
+
+        drawCycleRow(g, 9, contentRight, mouseX, mouseY, 0xFF2AA8C4,
+                Lang.s("settings.row.minimap_pos"), Lang.s("settings.row.minimap_pos.desc"),
+                Lang.s(s.minimapPosition().langKey()), s.minimapEnabled());
+
+        drawCycleRow(g, 10, contentRight, mouseX, mouseY, 0xFF2AA8C4,
+                Lang.s("settings.row.minimap_size"), Lang.s("settings.row.minimap_size.desc"),
+                Lang.s("settings.minimap.size_px", s.minimapSize()), s.minimapEnabled());
+
+        drawCycleRow(g, 11, contentRight, mouseX, mouseY, 0xFF2AA8C4,
+                Lang.s("settings.row.minimap_zoom"), Lang.s("settings.row.minimap_zoom.desc"),
+                formatZoom(s.minimapZoom()), s.minimapEnabled());
+
+        drawActionRow(g, 12, contentRight, mouseX, mouseY, 0xFF4A90E2,
                 Lang.s("settings.row.hotkeys"), Lang.s("settings.row.hotkeys.desc"),
                 Lang.s("settings.row.open_arrow"));
 
@@ -231,6 +257,28 @@ public class SettingsScreen extends Screen {
         drawPill(g, bx0, by0, bx1, by1, value, on, true, hover);
     }
 
+    private void drawCycleRow(GuiGraphicsExtractor g, int idx, int contentRight, int mouseX, int mouseY,
+                              int accent, String title, String desc, String value, boolean enabled) {
+        int ry0 = listY0 + idx * ROW_H - scroll;
+        int ry1 = ry0 + ROW_H;
+        if (ry1 <= listY0 || ry0 >= listY1) {
+            return;
+        }
+        int bx1 = contentRight - 6;
+        int bx0 = bx1 - BADGE_W;
+        drawRowBase(g, idx, contentRight, mouseX, mouseY, enabled ? accent : 0xFF3E4454, title, desc, bx0);
+        int by0 = ry0 + 4;
+        int by1 = ry1 - 5;
+        boolean hover = enabled && mouseX >= bx0 && mouseX < bx1
+                && mouseY >= Math.max(listY0, by0) && mouseY < Math.min(listY1, by1);
+        int border = !enabled ? 0xFF282C36 : (hover ? 0xFFFFFFFF : 0xFF3B6E80);
+        int bg = !enabled ? 0xFF181A22 : (hover ? 0xFF284858 : 0xFF1A2E3A);
+        int col = !enabled ? 0xFF555B6A : 0xFFE0F4FF;
+        g.fill(bx0, by0, bx1, by1, border);
+        g.fill(bx0 + 1, by0 + 1, bx1 - 1, by1 - 1, bg);
+        g.centeredText(this.font, value, (bx0 + bx1) / 2, by0 + 5, col);
+    }
+
     private void drawContainersRow(GuiGraphicsExtractor g, int idx, int contentRight, int mouseX, int mouseY, ChunkVaultSettings s) {
         int ry0 = listY0 + idx * ROW_H - scroll;
         int ry1 = ry0 + ROW_H;
@@ -293,14 +341,32 @@ public class SettingsScreen extends Screen {
         double mx = event.x();
         double my = event.y();
         int contentRight = maxScroll() > 0 ? listX1 - 8 : listX1;
+        int btn = event.button();
 
-        if (event.button() == InputConstants.MOUSE_BUTTON_LEFT
+        if ((btn == InputConstants.MOUSE_BUTTON_LEFT || btn == InputConstants.MOUSE_BUTTON_RIGHT)
                 && mx >= listX0 && mx < contentRight && my >= listY0 && my < listY1) {
             int idx = (int) ((my - listY0 + scroll) / ROW_H);
+            ChunkVaultSettings s = ChunkVaultSettings.get();
+            if (idx == 9 || idx == 10 || idx == 11) {
+                if (!s.minimapEnabled()) {
+                    return true;
+                }
+                int dir = btn == InputConstants.MOUSE_BUTTON_RIGHT ? -1 : 1;
+                if (idx == 9) {
+                    s.cycleMinimapPosition(dir);
+                } else if (idx == 10) {
+                    s.cycleMinimapSize(dir);
+                } else {
+                    s.cycleMinimapZoom(dir);
+                }
+                return true;
+            }
+            if (btn != InputConstants.MOUSE_BUTTON_LEFT) {
+                return super.mouseClicked(event, isDoubleClick);
+            }
             if (idx == 7) {
                 return super.mouseClicked(event, isDoubleClick);
             }
-            ChunkVaultSettings s = ChunkVaultSettings.get();
             switch (idx) {
                 case 0 -> {
                     boolean on = !AutoRecord.isAuto(serverKey);
@@ -344,6 +410,10 @@ public class SettingsScreen extends Screen {
                     return true;
                 }
                 case 8 -> {
+                    s.setMinimapEnabled(!s.minimapEnabled());
+                    return true;
+                }
+                case 12 -> {
                     applySeed();
                     Minecraft.getInstance().setScreenAndShow(new HotkeysScreen(this));
                     return true;
