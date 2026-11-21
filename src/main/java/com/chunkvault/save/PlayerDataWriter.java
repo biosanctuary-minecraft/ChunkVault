@@ -1,17 +1,23 @@
 package com.chunkvault.save;
 
 import net.minecraft.SharedConstants;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.DoubleTag;
 import net.minecraft.nbt.FloatTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtIo;
+import net.minecraft.nbt.Tag;
+import net.minecraft.util.ProblemReporter;
+import net.minecraft.world.level.storage.TagValueOutput;
 
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.UUID;
 import java.util.zip.GZIPOutputStream;
 
@@ -57,15 +63,47 @@ public final class PlayerDataWriter {
         return player;
     }
 
+    public static CompoundTag buildPlayerTag(LocalPlayer localPlayer, ClientLevel level, boolean includeInventory) {
+        CompoundTag tag = buildPlayerTag(
+                localPlayer.getX(), localPlayer.getY(), localPlayer.getZ(),
+                localPlayer.getYRot(), localPlayer.getXRot(),
+                level.dimension().identifier().toString()
+        );
+        if (includeInventory) {
+            try {
+                TagValueOutput output = TagValueOutput.createWithContext(ProblemReporter.DISCARDING, level.registryAccess());
+                localPlayer.saveWithoutId(output);
+                CompoundTag dumped = output.buildResult();
+                Tag inv = dumped.get("Inventory");
+                if (inv != null) {
+                    tag.put("Inventory", inv.copy());
+                }
+                Tag equip = dumped.get("equipment");
+                if (equip != null) {
+                    tag.put("equipment", equip.copy());
+                }
+                Tag sel = dumped.get("SelectedItemSlot");
+                if (sel != null) {
+                    tag.put("SelectedItemSlot", sel.copy());
+                }
+            } catch (Throwable t) {
+                System.err.println("[ChunkVault] Failed to serialize player inventory: " + t);
+            }
+        }
+        return tag;
+    }
+
     public static void writeToWorld(Path worldDir, UUID uuid, CompoundTag playerTag) {
         Path file = worldDir.resolve("players").resolve("data").resolve(uuid + ".dat");
         try {
             Files.createDirectories(file.getParent());
-            try (OutputStream fos = Files.newOutputStream(file);
+            Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
+            try (OutputStream fos = Files.newOutputStream(tmp);
                  GZIPOutputStream gz = new GZIPOutputStream(fos);
                  DataOutputStream dos = new DataOutputStream(gz)) {
                 NbtIo.write(playerTag, dos);
             }
+            Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException e) {
             System.err.println("[ChunkVault] Failed to write player data to " + file + ": " + e);
         }
