@@ -14,6 +14,7 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.util.function.Predicate;
 
 public class ContainerViewerScreen extends Screen {
 
@@ -53,17 +54,34 @@ public class ContainerViewerScreen extends Screen {
     private long statusUntil;
 
     public ContainerViewerScreen(Screen parent, String dimension, int x, int z, String initialKey) {
+        this(parent, dimension, x, z, initialKey, null);
+    }
+
+    public ContainerViewerScreen(Screen parent, String dimension, int x, int z, String initialKey,
+                                 Predicate<ContainerDatabase.ContainerEntry> filter) {
         super(Lang.c("viewer.title"));
         this.parent = parent;
         List<ContainerDatabase.ContainerEntry> raw = ContainerDatabase.atColumn(dimension, x, z);
         List<ContainerDatabase.ContainerEntry> filtered = new ArrayList<>();
         for (ContainerDatabase.ContainerEntry e : raw) {
-            if (!ContainerDatabase.isSecondaryHalf(e)) {
-                filtered.add(e);
+            if (ContainerDatabase.isSecondaryHalf(e)) {
+                continue;
             }
+            if (filter != null && !filter.test(e)) {
+                continue;
+            }
+            filtered.add(e);
         }
         if (filtered.isEmpty() && !raw.isEmpty()) {
-            filtered.add(raw.get(0));
+            for (ContainerDatabase.ContainerEntry e : raw) {
+                if (filter == null || filter.test(e)) {
+                    filtered.add(e);
+                    break;
+                }
+            }
+            if (filtered.isEmpty()) {
+                filtered.add(raw.get(0));
+            }
         }
         this.stackEntries = filtered;
         this.selectedIndex = 0;
