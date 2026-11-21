@@ -89,6 +89,7 @@ public final class ProjectMap {
             if (name != null) {
                 save();
             }
+            ContainerDatabase.flushNow();
             CHUNKS.clear();
             DIRTY.clear();
             REGION_KEYS.clear();
@@ -114,6 +115,7 @@ public final class ProjectMap {
             if (name != null) {
                 save();
             }
+            ContainerDatabase.flushNow();
             CHUNKS.clear();
             DIRTY.clear();
             REGION_KEYS.clear();
@@ -214,6 +216,7 @@ public final class ProjectMap {
                         write(dir.resolve(fileFor(e.getKey())), e.getKey(), e.getValue());
                     }
                 }
+                ContainerDatabase.flushNow();
                 storeDirty = false;
             } catch (Exception ex) {
                 System.err.println("[ChunkVault] Failed to save map for " + project + ": " + ex);
