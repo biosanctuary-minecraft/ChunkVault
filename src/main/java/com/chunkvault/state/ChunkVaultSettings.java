@@ -31,47 +31,10 @@ public final class ChunkVaultSettings {
         }
     }
 
-    public enum MinimapPosition {
-        TOP_LEFT("top_left", "settings.minimap.pos.top_left"),
-        TOP_RIGHT("top_right", "settings.minimap.pos.top_right"),
-        BOTTOM_LEFT("bottom_left", "settings.minimap.pos.bottom_left"),
-        BOTTOM_RIGHT("bottom_right", "settings.minimap.pos.bottom_right");
-
-        private final String key;
-        private final String langKey;
-
-        MinimapPosition(String key, String langKey) {
-            this.key = key;
-            this.langKey = langKey;
-        }
-
-        public String key() {
-            return key;
-        }
-
-        public String langKey() {
-            return langKey;
-        }
-
-        public MinimapPosition step(int dir) {
-            MinimapPosition[] vals = values();
-            return vals[(ordinal() + dir + vals.length) % vals.length];
-        }
-
-        public static MinimapPosition fromKey(String key) {
-            if (key != null) {
-                for (MinimapPosition p : values()) {
-                    if (p.key.equals(key)) {
-                        return p;
-                    }
-                }
-            }
-            return TOP_LEFT;
-        }
-    }
-
-    public static final int[] MINIMAP_SIZES = {84, 112, 144, 180};
-    public static final double[] MINIMAP_ZOOMS = {0.25, 0.5, 1.0, 1.5, 2.0};
+    public static final int MINIMAP_MIN_SIZE = 64;
+    public static final int MINIMAP_MAX_SIZE = 260;
+    public static final int MINIMAP_SIZE_STEP = 8;
+    public static final double[] MINIMAP_ZOOMS = {0.25, 0.35, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0};
 
     private static final ChunkVaultSettings INSTANCE = new ChunkVaultSettings();
 
@@ -82,7 +45,8 @@ public final class ChunkVaultSettings {
     private volatile boolean useSeed = false;
     private volatile long seed = 0L;
     private volatile boolean minimapEnabled = true;
-    private volatile MinimapPosition minimapPosition = MinimapPosition.TOP_LEFT;
+    private volatile double minimapX = 0.0;
+    private volatile double minimapY = 0.0;
     private volatile int minimapSize = 112;
     private volatile double minimapZoom = 0.5;
     private final EnumSet<ContainerCategory> enabledContainers = EnumSet.allOf(ContainerCategory.class);
@@ -180,12 +144,17 @@ public final class ChunkVaultSettings {
         save();
     }
 
-    public MinimapPosition minimapPosition() {
-        return minimapPosition;
+    public double minimapX() {
+        return minimapX;
     }
 
-    public void cycleMinimapPosition(int dir) {
-        this.minimapPosition = this.minimapPosition.step(dir);
+    public double minimapY() {
+        return minimapY;
+    }
+
+    public void setMinimapPosition(double rx, double ry) {
+        this.minimapX = clamp01(rx);
+        this.minimapY = clamp01(ry);
         save();
     }
 
@@ -193,49 +162,55 @@ public final class ChunkVaultSettings {
         return minimapSize;
     }
 
-    public void cycleMinimapSize(int dir) {
-        int idx = 1;
-        for (int i = 0; i < MINIMAP_SIZES.length; i++) {
-            if (MINIMAP_SIZES[i] == minimapSize) {
-                idx = i;
-                break;
-            }
-        }
-        minimapSize = MINIMAP_SIZES[(idx + dir + MINIMAP_SIZES.length) % MINIMAP_SIZES.length];
+    public void setMinimapSize(int size) {
+        this.minimapSize = clampSize(size);
         save();
+    }
+
+    public void stepMinimapSize(int dir) {
+        setMinimapSize(minimapSize + dir * MINIMAP_SIZE_STEP);
     }
 
     public double minimapZoom() {
         return minimapZoom;
     }
 
-    public void cycleMinimapZoom(int dir) {
-        int idx = 1;
+    public void stepMinimapZoom(int dir) {
+        int idx = 2;
         for (int i = 0; i < MINIMAP_ZOOMS.length; i++) {
             if (Math.abs(MINIMAP_ZOOMS[i] - minimapZoom) < 0.001) {
                 idx = i;
                 break;
             }
         }
-        minimapZoom = MINIMAP_ZOOMS[(idx + dir + MINIMAP_ZOOMS.length) % MINIMAP_ZOOMS.length];
+        int next = Math.max(0, Math.min(MINIMAP_ZOOMS.length - 1, idx + dir));
+        minimapZoom = MINIMAP_ZOOMS[next];
         save();
     }
 
-    private static int snapSize(int v) {
-        int best = MINIMAP_SIZES[1];
-        int bestDiff = Integer.MAX_VALUE;
-        for (int s : MINIMAP_SIZES) {
-            int d = Math.abs(s - v);
-            if (d < bestDiff) {
-                bestDiff = d;
-                best = s;
-            }
+    public void resetMinimapLayout() {
+        this.minimapX = 0.0;
+        this.minimapY = 0.0;
+        this.minimapSize = 112;
+        this.minimapZoom = 0.5;
+        save();
+    }
+
+    private static double clamp01(double v) {
+        if (Double.isNaN(v) || Double.isInfinite(v)) {
+            return 0.0;
         }
-        return best;
+        return Math.max(0.0, Math.min(1.0, v));
+    }
+
+    private static int clampSize(int v) {
+        int clamped = Math.max(MINIMAP_MIN_SIZE, Math.min(MINIMAP_MAX_SIZE, v));
+        int offset = clamped - MINIMAP_MIN_SIZE;
+        return MINIMAP_MIN_SIZE + Math.round((float) offset / MINIMAP_SIZE_STEP) * MINIMAP_SIZE_STEP;
     }
 
     private static double snapZoom(double v) {
-        double best = MINIMAP_ZOOMS[1];
+        double best = MINIMAP_ZOOMS[2];
         double bestDiff = Double.MAX_VALUE;
         for (double z : MINIMAP_ZOOMS) {
             double d = Math.abs(z - v);
@@ -266,8 +241,26 @@ public final class ChunkVaultSettings {
             useSeed = Boolean.parseBoolean(p.getProperty("useSeed", "false"));
             seed = Long.parseLong(p.getProperty("seed", "0"));
             minimapEnabled = Boolean.parseBoolean(p.getProperty("minimapEnabled", "true"));
-            minimapPosition = MinimapPosition.fromKey(p.getProperty("minimapPosition", "top_left"));
-            minimapSize = snapSize(Integer.parseInt(p.getProperty("minimapSize", "112")));
+            if (p.containsKey("minimapX") && p.containsKey("minimapY")) {
+                minimapX = clamp01(Double.parseDouble(p.getProperty("minimapX", "0.0")));
+                minimapY = clamp01(Double.parseDouble(p.getProperty("minimapY", "0.0")));
+            } else {
+                String legacy = p.getProperty("minimapPosition", "top_left");
+                if ("top_right".equals(legacy)) {
+                    minimapX = 1.0;
+                    minimapY = 0.0;
+                } else if ("bottom_left".equals(legacy)) {
+                    minimapX = 0.0;
+                    minimapY = 1.0;
+                } else if ("bottom_right".equals(legacy)) {
+                    minimapX = 1.0;
+                    minimapY = 1.0;
+                } else {
+                    minimapX = 0.0;
+                    minimapY = 0.0;
+                }
+            }
+            minimapSize = clampSize(Integer.parseInt(p.getProperty("minimapSize", "112")));
             minimapZoom = snapZoom(Double.parseDouble(p.getProperty("minimapZoom", "0.5")));
             enabledContainers.clear();
             for (ContainerCategory c : ContainerCategory.values()) {
@@ -289,7 +282,8 @@ public final class ChunkVaultSettings {
         p.setProperty("useSeed", Boolean.toString(useSeed));
         p.setProperty("seed", Long.toString(seed));
         p.setProperty("minimapEnabled", Boolean.toString(minimapEnabled));
-        p.setProperty("minimapPosition", minimapPosition.key());
+        p.setProperty("minimapX", Double.toString(minimapX));
+        p.setProperty("minimapY", Double.toString(minimapY));
         p.setProperty("minimapSize", Integer.toString(minimapSize));
         p.setProperty("minimapZoom", Double.toString(minimapZoom));
         for (ContainerCategory c : ContainerCategory.values()) {
