@@ -388,7 +388,7 @@ public class ChunkVaultClient implements ClientModInitializer {
         }
         int centerX = player.blockPosition().getX() >> 4;
         int centerZ = player.blockPosition().getZ() >> 4;
-        int radius = Minecraft.getInstance().options.renderDistance().get() + 2;
+        int radius = Minecraft.getInstance().options.getEffectiveRenderDistance() + 2;
         int count = 0;
         String dimensionId = level.dimension().identifier().toString();
         for (int dx = -radius; dx <= radius; dx++) {
