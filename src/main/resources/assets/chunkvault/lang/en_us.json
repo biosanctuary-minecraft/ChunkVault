@@ -281,5 +281,12 @@
   "chunkvault.db.sort.farthest": "Farthest",
   "chunkvault.db.sort.filled_desc": "Most Full",
   "chunkvault.db.sort.filled_asc": "Least Full",
-  "chunkvault.db.sort.name": "Name A–Z"
+  "chunkvault.db.sort.name": "Name A–Z",
+  "chunkvault.explorer.delete": "Delete",
+  "chunkvault.explorer.delete_confirm": "Confirm?",
+  "chunkvault.explorer.delete_confirm_hint": "Click “Confirm?” again to permanently delete “%s”",
+  "chunkvault.explorer.deleting": "Deleting…",
+  "chunkvault.explorer.deleted": "Deleted project: %s",
+  "chunkvault.explorer.delete_error": "Delete failed: %s",
+  "chunkvault.explorer.active_tag": "OPEN"
 }
