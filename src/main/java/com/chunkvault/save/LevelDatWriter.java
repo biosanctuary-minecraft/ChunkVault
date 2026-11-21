@@ -89,11 +89,14 @@ public final class LevelDatWriter {
     }
 
     private static void writeGzipNbt(Path file, CompoundTag root) throws IOException {
-        try (OutputStream fos = Files.newOutputStream(file);
+        Files.createDirectories(file.getParent());
+        Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
+        try (OutputStream fos = Files.newOutputStream(tmp);
              GZIPOutputStream gz = new GZIPOutputStream(fos);
              DataOutputStream dos = new DataOutputStream(gz)) {
             NbtIo.write(root, dos);
         }
+        Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
     }
 
     private static boolean hasWorldGenSettings(Path worldDir) {
@@ -101,17 +104,29 @@ public final class LevelDatWriter {
     }
 
     private static CompoundTag loadTemplateOrFallback(Path worldDir, Path gameDir) throws IOException {
-        boolean skipDataCopy = hasWorldGenSettings(worldDir);
+        Path existing = worldDir.resolve("level.dat");
+        if (Files.isRegularFile(existing)) {
+            try {
+                return readNbt(existing);
+            } catch (IOException e) {
+                System.err.println("[ChunkVault] Failed to read existing level.dat: " + e);
+            }
+        }
+
+        boolean hasWorldGen = hasWorldGenSettings(worldDir);
+        if (hasWorldGen) {
+            return buildMinimal();
+        }
 
         Path manual = worldDir.resolve("template_level.dat");
         if (Files.exists(manual)) {
             try {
                 CompoundTag tag = readNbt(manual);
                 Path manualData = worldDir.resolve("template_data");
-                if (!skipDataCopy && Files.isDirectory(manualData)) {
+                if (Files.isDirectory(manualData)) {
                     copyDataDir(manualData, worldDir.resolve("data"));
                 }
-                return tag;
+                return normalizeTemplate(tag);
             } catch (IOException e) {
                 System.err.println("[ChunkVault] Failed to read template_level.dat: " + e);
             }
@@ -120,33 +135,55 @@ public final class LevelDatWriter {
         if (gameDir != null) {
             Path savesDir = gameDir.resolve("saves");
 
-            if (!skipDataCopy) {
-                Path voidWorld = savesDir.resolve(VOID_TEMPLATE_WORLD_NAME);
-                Path voidLevelDat = voidWorld.resolve("level.dat");
-                if (Files.isRegularFile(voidLevelDat)) {
-                    try {
-                        CompoundTag tag = readNbt(voidLevelDat);
-                        Path sourceData = voidWorld.resolve("data");
-                        if (Files.isDirectory(sourceData)) {
-                            copyDataDir(sourceData, worldDir.resolve("data"));
-                        }
-                        return tag;
-                    } catch (IOException e) {
-                        System.err.println("[ChunkVault] Failed to read void template world: " + e);
+            Path voidWorld = savesDir.resolve(VOID_TEMPLATE_WORLD_NAME);
+            Path voidLevelDat = voidWorld.resolve("level.dat");
+            if (Files.isRegularFile(voidLevelDat)) {
+                try {
+                    CompoundTag tag = readNbt(voidLevelDat);
+                    Path sourceData = voidWorld.resolve("data");
+                    if (Files.isDirectory(sourceData)) {
+                        copyDataDir(sourceData, worldDir.resolve("data"));
                     }
+                    return normalizeTemplate(tag);
+                } catch (IOException e) {
+                    System.err.println("[ChunkVault] Failed to read void template world: " + e);
                 }
             }
 
-            CompoundTag fromSaves = findLatestLevelDat(savesDir, worldDir, skipDataCopy);
+            CompoundTag fromSaves = findLatestLevelDat(savesDir, worldDir);
             if (fromSaves != null) {
-                return fromSaves;
+                return normalizeTemplate(fromSaves);
             }
         }
 
         return buildMinimal();
     }
 
-    private static CompoundTag findLatestLevelDat(Path savesDir, Path targetWorldDir, boolean skipDataCopy) {
+    private static CompoundTag normalizeTemplate(CompoundTag root) {
+        CompoundTag data = root.getCompound("Data").orElseGet(CompoundTag::new);
+        data.putInt("GameType", 0);
+        data.putBoolean("allowCommands", true);
+        data.putLong("Time", 0L);
+        data.remove("hardcore");
+
+        CompoundTag difficultySettings = new CompoundTag();
+        difficultySettings.putString("difficulty", "normal");
+        difficultySettings.putBoolean("locked", false);
+        difficultySettings.putBoolean("hardcore", false);
+        data.put("difficulty_settings", difficultySettings);
+
+        CompoundTag dataPacks = new CompoundTag();
+        ListTag enabled = new ListTag();
+        enabled.add(StringTag.valueOf("vanilla"));
+        dataPacks.put("Enabled", enabled);
+        dataPacks.put("Disabled", new ListTag());
+        data.put("DataPacks", dataPacks);
+
+        root.put("Data", data);
+        return root;
+    }
+
+    private static CompoundTag findLatestLevelDat(Path savesDir, Path targetWorldDir) {
         if (!Files.isDirectory(savesDir)) {
             return null;
         }
@@ -167,11 +204,9 @@ public final class LevelDatWriter {
                 return null;
             }
             CompoundTag tag = readNbt(candidate);
-            if (!skipDataCopy) {
-                Path sourceData = candidate.getParent().resolve("data");
-                if (Files.isDirectory(sourceData)) {
-                    copyDataDir(sourceData, targetWorldDir.resolve("data"));
-                }
+            Path sourceData = candidate.getParent().resolve("data");
+            if (Files.isDirectory(sourceData)) {
+                copyDataDir(sourceData, targetWorldDir.resolve("data"));
             }
             return tag;
         } catch (IOException e) {
