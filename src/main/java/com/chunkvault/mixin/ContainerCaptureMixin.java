@@ -24,6 +24,7 @@ import net.minecraft.world.inventory.ShulkerBoxMenu;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.EnderChestBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.ChestType;
 import net.minecraft.world.level.chunk.LevelChunk;
@@ -54,8 +55,9 @@ public abstract class ContainerCaptureMixin {
         chunkvault$checked = true;
         ChunkVaultSettings settings = ChunkVaultSettings.get();
         ChunkVaultSettings.ContainerCategory category = categoryOf(this.menu);
-        if (!RecordingState.get().isActive() || category == null
-                || !settings.saveContainers() || !settings.isContainerEnabled(category)) {
+        boolean canCaptureAny = (settings.saveContainers() && category != null && settings.isContainerEnabled(category))
+                || (settings.saveEnderChest() && this.menu instanceof ChestMenu);
+        if (!RecordingState.get().isActive() || !canCaptureAny) {
             return;
         }
         BlockPos pos = LastInteraction.consumeRecent();
@@ -85,8 +87,7 @@ public abstract class ContainerCaptureMixin {
         chunkvault$targetPos = null;
         ChunkVaultSettings settings = ChunkVaultSettings.get();
         ChunkVaultSettings.ContainerCategory category = categoryOf(this.menu);
-        if (!RecordingState.get().isActive() || pos == null || category == null
-                || !settings.saveContainers() || !settings.isContainerEnabled(category)) {
+        if (!RecordingState.get().isActive() || pos == null) {
             return;
         }
 
@@ -104,11 +105,40 @@ public abstract class ContainerCaptureMixin {
         int sourceSize = source.getContainerSize();
 
         BlockEntity primary = level.getBlockEntity(pos);
+        BlockState state = level.getBlockState(pos);
+        if (primary instanceof EnderChestBlockEntity) {
+            if (sourceSize != 27) {
+                return;
+            }
+            if (settings.saveEnderChest() && client.player != null) {
+                copyItems(source, 0, client.player.getEnderChestInventory(), 0, 27);
+            }
+            if ((settings.saveContainers() && settings.isContainerEnabled(ChunkVaultSettings.ContainerCategory.CHESTS))
+                    || settings.saveEnderChest()) {
+                manager.rememberEnderChest(level, primary, source);
+                manager.notifyChestCaptured();
+                if (client.player != null) {
+                    int filled = 0;
+                    for (int i = 0; i < 27; i++) {
+                        if (!source.getItem(i).isEmpty()) {
+                            filled++;
+                        }
+                    }
+                    client.player.sendSystemMessage(Component.literal("§a[ChunkVault] ").append(
+                            Lang.c("chest.saved", state.getBlock().getName(),
+                                    pos.getX(), pos.getY(), pos.getZ(), filled, 27)));
+                }
+            }
+            return;
+        }
+
+        if (category == null || !settings.saveContainers() || !settings.isContainerEnabled(category)) {
+            return;
+        }
         if (!(primary instanceof Container primaryContainer)) {
             return;
         }
         int half = primaryContainer.getContainerSize();
-        BlockState state = level.getBlockState(pos);
         String dim = level.dimension().identifier().toString();
 
         if (state.getBlock() instanceof ChestBlock) {
