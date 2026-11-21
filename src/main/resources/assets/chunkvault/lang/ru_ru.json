@@ -290,5 +290,7 @@
   "chunkvault.explorer.delete_error": "Ошибка удаления: %s",
   "chunkvault.explorer.active_tag": "ОТКРЫТ",
   "chunkvault.settings.row.ender_chest": "Сохранять эндер-сундук",
-  "chunkvault.settings.row.ender_chest.desc": "Сохранять содержимое открытого эндер-сундука в синглмир"
+  "chunkvault.settings.row.ender_chest.desc": "Сохранять содержимое открытого эндер-сундука в синглмир",
+  "chunkvault.map.filter.type.ender": "Эндер",
+  "chunkvault.db.cat.ender": "Эндер-сундуки"
 }
