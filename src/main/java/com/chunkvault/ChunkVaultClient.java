@@ -186,7 +186,9 @@ public class ChunkVaultClient implements ClientModInitializer {
                 AreaEtaTracker.reset();
                 DirtyChunkTracker.clear();
                 if (RecordingState.get().isActive()) {
-                    stopRecording();
+                    stopRecordingSync();
+                } else {
+                    RecordingState.get().awaitFinished();
                 }
                 ProjectMap.close();
             };
@@ -368,6 +370,42 @@ public class ChunkVaultClient implements ClientModInitializer {
 
     public static StopResult stopRecording() {
         if (!RecordingState.get().isActive()) {
+            return null;
+        }
+        var manager = RecordingState.get().saveManager();
+        if (manager == null) {
+            return null;
+        }
+        var player = Minecraft.getInstance().player;
+        var level = Minecraft.getInstance().level;
+        if (level != null) {
+            snapshotAlreadyLoadedChunks();
+            manager.snapshotEntities(level);
+        }
+        int chunks = manager.chunksSaved();
+        int chests = manager.chestsSeen();
+        int entities = manager.entitiesSeen();
+
+        UUID uuid = null;
+        CompoundTag playerTag = null;
+        boolean inOverworld = level != null && level.dimension().equals(Level.OVERWORLD);
+        var spawnPos = (player != null && inOverworld) ? player.blockPosition() : null;
+
+        if (player != null && level != null) {
+            uuid = Minecraft.getInstance().getUser().getProfileId();
+            playerTag = PlayerDataWriter.buildPlayerTag(
+                    player, level, ChunkVaultSettings.get().savePlayerInventory());
+        }
+
+        LastInteraction.clear();
+        DirtyChunkTracker.clear();
+        Path dir = RecordingState.get().stopAsync(spawnPos, uuid, playerTag, ProjectMap::save);
+        return new StopResult(chunks, chests, entities, dir);
+    }
+
+    public static StopResult stopRecordingSync() {
+        if (!RecordingState.get().isActive()) {
+            RecordingState.get().awaitFinished();
             return null;
         }
         var manager = RecordingState.get().saveManager();
