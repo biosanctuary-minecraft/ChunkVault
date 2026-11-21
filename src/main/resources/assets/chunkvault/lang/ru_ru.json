@@ -270,5 +270,16 @@
   "chunkvault.minimap.layout.title": "ChunkVault — позиция мини-карты",
   "chunkvault.minimap.layout.hint": "Тяните карту мышкой  •  Угол или -/+ — размер  •  Колесо — зум",
   "chunkvault.minimap.layout.size": "Размер:",
-  "chunkvault.minimap.layout.zoom": "Зум:"
+  "chunkvault.minimap.layout.zoom": "Зум:",
+  "chunkvault.db.status.all": "Статус: Все",
+  "chunkvault.db.status.opened": "Статус: Открытые",
+  "chunkvault.db.status.unopened": "Статус: Неоткрытые",
+  "chunkvault.db.sort_prefix": "Сорт: %s",
+  "chunkvault.db.sort.newest": "Новые",
+  "chunkvault.db.sort.oldest": "Старые",
+  "chunkvault.db.sort.nearest": "Ближайшие",
+  "chunkvault.db.sort.farthest": "Дальние",
+  "chunkvault.db.sort.filled_desc": "Полнее",
+  "chunkvault.db.sort.filled_asc": "Пустее",
+  "chunkvault.db.sort.name": "Имя А–Я"
 }
