@@ -10,7 +10,6 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.Container;
 import net.minecraft.world.entity.player.Inventory;
@@ -25,7 +24,6 @@ import net.minecraft.world.inventory.ShulkerBoxMenu;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
-import net.minecraft.world.level.block.entity.ChestBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.ChestType;
 import net.minecraft.world.level.chunk.LevelChunk;
@@ -113,38 +111,56 @@ public abstract class ContainerCaptureMixin {
         BlockState state = level.getBlockState(pos);
         String dim = level.dimension().identifier().toString();
 
-        if (sourceSize <= half || !(state.getBlock() instanceof ChestBlock)) {
-            if (!AreaPlan.allowsBlock(dim, pos.getX(), pos.getZ())) {
-                return;
-            }
-            copyItems(source, 0, primaryContainer, 0, Math.min(sourceSize, half));
-            manager.rememberContainer(level, primary);
-        } else {
-            BlockPos otherPos = findOtherHalf(level, state, pos);
-            BlockEntity other = otherPos == null ? null : level.getBlockEntity(otherPos);
-            if (other instanceof Container otherContainer) {
-                boolean allowPrimary = AreaPlan.allowsBlock(dim, pos.getX(), pos.getZ());
-                boolean allowOther = AreaPlan.allowsBlock(dim, otherPos.getX(), otherPos.getZ());
-                if (!allowPrimary && !allowOther) {
+        if (state.getBlock() instanceof ChestBlock) {
+            ChestType chestType = state.getValue(ChestBlock.TYPE);
+            if (chestType == ChestType.SINGLE) {
+                if (sourceSize != half) {
                     return;
                 }
-                boolean primaryIsFirst = state.getValue(ChestBlock.TYPE) == ChestType.RIGHT;
-                BlockEntity firstBe = primaryIsFirst ? primary : other;
-                BlockEntity secondBe = primaryIsFirst ? other : primary;
-                Container firstContainer = primaryIsFirst ? primaryContainer : otherContainer;
-                Container secondContainer = primaryIsFirst ? otherContainer : primaryContainer;
-                copyItems(source, 0, firstContainer, 0, half);
-                copyItems(source, half, secondContainer, 0, sourceSize - half);
-                manager.rememberContainer(level, firstBe);
-                manager.rememberContainer(level, secondBe);
-                resaveChunkContaining(level, manager, otherPos);
-            } else {
                 if (!AreaPlan.allowsBlock(dim, pos.getX(), pos.getZ())) {
                     return;
                 }
                 copyItems(source, 0, primaryContainer, 0, half);
                 manager.rememberContainer(level, primary);
+            } else {
+                BlockPos otherPos = findOtherHalf(level, state, pos);
+                BlockEntity other = otherPos == null ? null : level.getBlockEntity(otherPos);
+                if (other instanceof Container otherContainer) {
+                    if (sourceSize != half * 2) {
+                        return;
+                    }
+                    boolean primaryAllowed = AreaPlan.allowsBlock(dim, pos.getX(), pos.getZ());
+                    boolean otherAllowed = AreaPlan.allowsBlock(dim, otherPos.getX(), otherPos.getZ());
+                    if (!primaryAllowed && !otherAllowed) {
+                        return;
+                    }
+                    boolean primaryIsFirst = chestType == ChestType.RIGHT;
+                    BlockEntity firstBe = primaryIsFirst ? primary : other;
+                    BlockEntity secondBe = primaryIsFirst ? other : primary;
+                    Container firstContainer = primaryIsFirst ? primaryContainer : otherContainer;
+                    Container secondContainer = primaryIsFirst ? otherContainer : primaryContainer;
+                    copyItems(source, 0, firstContainer, 0, half);
+                    copyItems(source, half, secondContainer, 0, half);
+                    manager.rememberContainer(level, firstBe);
+                    manager.rememberContainer(level, secondBe);
+                    resaveChunkContaining(level, manager, otherPos);
+                } else {
+                    if (sourceSize != half) {
+                        return;
+                    }
+                    if (!AreaPlan.allowsBlock(dim, pos.getX(), pos.getZ())) {
+                        return;
+                    }
+                    copyItems(source, 0, primaryContainer, 0, half);
+                    manager.rememberContainer(level, primary);
+                }
             }
+        } else {
+            if (!AreaPlan.allowsBlock(dim, pos.getX(), pos.getZ())) {
+                return;
+            }
+            copyItems(source, 0, primaryContainer, 0, Math.min(sourceSize, half));
+            manager.rememberContainer(level, primary);
         }
 
         manager.notifyChestCaptured();
@@ -211,14 +227,11 @@ public abstract class ContainerCaptureMixin {
     }
 
     private static BlockPos findOtherHalf(ClientLevel level, BlockState state, BlockPos pos) {
-        if (state.getBlock() instanceof ChestBlock && state.getValue(ChestBlock.TYPE) != ChestType.SINGLE) {
-            return pos.relative(ChestBlock.getConnectedDirection(state));
-        }
-        for (Direction dir : Direction.Plane.HORIZONTAL) {
-            BlockPos neighborPos = pos.relative(dir);
-            if (level.getBlockEntity(neighborPos) instanceof ChestBlockEntity) {
-                return neighborPos;
+        if (state.getBlock() instanceof ChestBlock) {
+            if (state.getValue(ChestBlock.TYPE) == ChestType.SINGLE) {
+                return null;
             }
+            return pos.relative(ChestBlock.getConnectedDirection(state));
         }
         return null;
     }
