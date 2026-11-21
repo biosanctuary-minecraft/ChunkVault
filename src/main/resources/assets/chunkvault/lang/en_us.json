@@ -290,5 +290,7 @@
   "chunkvault.explorer.delete_error": "Delete failed: %s",
   "chunkvault.explorer.active_tag": "OPEN",
   "chunkvault.settings.row.ender_chest": "Save Ender Chest",
-  "chunkvault.settings.row.ender_chest.desc": "Export opened Ender Chest items to singleplayer world"
+  "chunkvault.settings.row.ender_chest.desc": "Export opened Ender Chest items to singleplayer world",
+  "chunkvault.map.filter.type.ender": "Ender",
+  "chunkvault.db.cat.ender": "Ender Chests"
 }
