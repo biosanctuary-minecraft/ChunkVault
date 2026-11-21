@@ -229,6 +229,7 @@ public final class WorldSaveManager {
             Thread.currentThread().interrupt();
         }
         flushEntities();
+        ContainerDatabase.flushNow();
         for (SimpleRegionFile region : openRegions.values()) {
             try {
                 region.close();
