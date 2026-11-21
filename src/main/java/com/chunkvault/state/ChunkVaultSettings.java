@@ -5,6 +5,7 @@ import net.fabricmc.loader.api.FabricLoader;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.EnumSet;
 import java.util.Properties;
 
@@ -153,10 +154,13 @@ public final class ChunkVaultSettings {
             p.setProperty("container." + c.key(), Boolean.toString(enabledContainers.contains(c)));
         }
         try {
-            Files.createDirectories(file().getParent());
-            try (var out = Files.newOutputStream(file())) {
+            Path f = file();
+            Files.createDirectories(f.getParent());
+            Path tmp = f.resolveSibling(f.getFileName() + ".tmp");
+            try (var out = Files.newOutputStream(tmp)) {
                 p.store(out, "ChunkVault settings");
             }
+            Files.move(tmp, f, StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException e) {
             System.err.println("[ChunkVault] Failed to save settings: " + e);
         }
