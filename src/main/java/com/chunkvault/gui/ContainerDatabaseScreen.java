@@ -1,5 +1,6 @@
 package com.chunkvault.gui;
 
+import com.chunkvault.ChunkVaultClient;
 import com.chunkvault.Lang;
 import com.chunkvault.save.ContainerContentReader;
 import com.chunkvault.save.ContainerDatabase;
@@ -8,6 +9,7 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
@@ -54,6 +56,7 @@ public class ContainerDatabaseScreen extends Screen {
     ) {}
 
     private final MapScreen parent;
+    private final long openedAtMs = System.currentTimeMillis();
     private EditBox searchBox;
 
     private String query = "";
@@ -415,6 +418,17 @@ public class ContainerDatabaseScreen extends Screen {
         }
 
         super.extractRenderState(g, mouseX, mouseY, partialTick);
+    }
+
+    @Override
+    public boolean keyPressed(KeyEvent event) {
+        if (System.currentTimeMillis() - openedAtMs >= 180L
+                && !(this.getFocused() instanceof EditBox eb && eb.canConsumeInput())
+                && ChunkVaultClient.matchesOpenChests(event)) {
+            this.onClose();
+            return true;
+        }
+        return super.keyPressed(event);
     }
 
     @Override
