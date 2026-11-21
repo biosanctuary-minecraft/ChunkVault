@@ -9,7 +9,9 @@ import com.chunkvault.state.RecordingState;
 import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
@@ -39,6 +41,8 @@ public class MapScreen extends Screen {
     private static ItemStack chestIcon;
 
     private record PinGroup(ContainerDatabase.ContainerEntry top, int count, int sx, int sy) {}
+
+    private final long openedAtMs = System.currentTimeMillis();
 
     private double centerX;
     private double centerZ;
@@ -567,6 +571,27 @@ public class MapScreen extends Screen {
         } else if (hoveredPin != null) {
             drawPinTooltip(g, hoveredPin, mouseX, mouseY);
         }
+    }
+
+    @Override
+    public boolean keyPressed(KeyEvent event) {
+        if (System.currentTimeMillis() - openedAtMs >= 180L
+                && !(this.getFocused() instanceof EditBox eb && eb.canConsumeInput())) {
+            if (ChunkVaultClient.matchesOpenMap(event)) {
+                this.onClose();
+                return true;
+            }
+            if (ChunkVaultClient.matchesToggleRecord(event)) {
+                toggleRecording();
+                return true;
+            }
+            if (ChunkVaultClient.matchesToggleHud(event)) {
+                boolean on = AreaPlan.toggleHud();
+                showToast(Lang.s("area.btn_hud", on ? Lang.s("common.on") : Lang.s("common.off")));
+                return true;
+            }
+        }
+        return super.keyPressed(event);
     }
 
     private void drawDimToggleIcon(GuiGraphicsExtractor g, boolean hover) {
