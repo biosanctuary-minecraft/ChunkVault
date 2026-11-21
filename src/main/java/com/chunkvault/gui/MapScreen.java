@@ -43,7 +43,7 @@ public class MapScreen extends Screen {
     private static boolean showPins = true;
     private static ItemStack chestIcon;
 
-    private record PinGroup(ContainerDatabase.ContainerEntry top, int count, int sx, int sy) {}
+    private record PinGroup(ContainerDatabase.ContainerEntry top, int count, int sxDev, int syDev) {}
 
     private final long openedAtMs = System.currentTimeMillis();
 
@@ -254,10 +254,7 @@ public class MapScreen extends Screen {
         fpX0 = Math.max(8, fpX1 - FILTER_PANEL_W);
         fpY1 = anchorTop - 6;
         fpY0 = Math.max(TOP_BAR + 4, fpY1 - FILTER_PANEL_H);
-        if (fpY0 + FILTER_PANEL_H > this.height - BOTTOM_BAR - 4) {
-            fpY1 = this.height - BOTTOM_BAR - 4;
-            fpY0 = Math.max(TOP_BAR + 4, fpY1 - FILTER_PANEL_H);
-        }
+        fpY1 = Math.min(this.height - BOTTOM_BAR - 4, fpY0 + FILTER_PANEL_H);
         if (filterSearchBox != null) {
             filterSearchBox.setVisible(true);
             filterSearchBox.setX(fpX0 + 8);
@@ -538,8 +535,6 @@ public class MapScreen extends Screen {
         double yaw = Math.toRadians(player.getYRot());
         drawArrow(g, pcx, pcy, -Math.sin(yaw), Math.cos(yaw), 3.2 * dev + 5.0);
 
-        g.pose().popMatrix();
-
         hoveredPin = null;
         if (hasProject && showPins && !selectingArea) {
             drawContainerPins(g, dimensionId, mapCX, mapCY, minCx, maxCx, minCz, maxCz, mouseX, mouseY, inMap);
@@ -547,16 +542,19 @@ public class MapScreen extends Screen {
 
         long now = System.currentTimeMillis();
         if (focusUntil > now) {
-            int fx = (int) Math.round(mapCX + (focusX + 0.5 - centerX) * scale);
-            int fy = (int) Math.round(mapCY + (focusZ + 0.5 - centerZ) * scale);
+            int fxDev = (int) Math.round((mapCX + (focusX + 0.5 - centerX) * scale) * dev);
+            int fyDev = (int) Math.round((mapCY + (focusZ + 0.5 - centerZ) * scale) * dev);
             boolean pulse = ((now / 180) & 1) == 0;
-            int ringR = pulse ? 9 : 7;
+            int ringR = (int) Math.round((pulse ? 9.0 : 7.0) * dev);
+            int ringT = Math.max(2, (int) Math.round(2.0 * dev));
             int ringColor = pulse ? 0xFFFFFFFF : 0xFFFFD070;
-            g.fill(fx - ringR, fy - ringR, fx + ringR, fy - ringR + 2, ringColor);
-            g.fill(fx - ringR, fy + ringR - 2, fx + ringR, fy + ringR, ringColor);
-            g.fill(fx - ringR, fy - ringR, fx - ringR + 2, fy + ringR, ringColor);
-            g.fill(fx + ringR - 2, fy - ringR, fx + ringR, fy + ringR, ringColor);
+            fillI(g, fxDev - ringR, fyDev - ringR, fxDev + ringR, fyDev - ringR + ringT, ringColor);
+            fillI(g, fxDev - ringR, fyDev + ringR - ringT, fxDev + ringR, fyDev + ringR, ringColor);
+            fillI(g, fxDev - ringR, fyDev - ringR, fxDev - ringR + ringT, fyDev + ringR, ringColor);
+            fillI(g, fxDev + ringR - ringT, fyDev - ringR, fxDev + ringR, fyDev + ringR, ringColor);
         }
+
+        g.pose().popMatrix();
 
         if (selectingArea && draggingArea) {
             int wChunks = Math.abs(areaEndCx - areaStartCx) + 1;
@@ -1271,8 +1269,15 @@ public class MapScreen extends Screen {
             grouped.computeIfAbsent(colKey, k -> new ArrayList<>()).add(e);
         }
 
-        int pinR = Math.max(3, Math.min(5, (int) Math.round(scale * 0.5 + 2.5)));
-        int hitR = Math.max(pinR + 1, 5);
+        int pinR = Math.max((int) Math.round(2.5 * dev),
+                Math.min((int) Math.round(5.0 * dev), (int) Math.round((scale * 0.5 + 2.5) * dev)));
+        int outline = Math.max(1, (int) Math.round(dev));
+        int innerDot = Math.max(1, (int) Math.round(dev));
+        int hitR = Math.max(pinR + outline, (int) Math.round(5.0 * dev));
+        int pad = (int) Math.round(16.0 * dev);
+        double mxDev = mouseX * dev;
+        double myDev = mouseY * dev;
+
         List<PinGroup> pins = new ArrayList<>(grouped.size());
         PinGroup bestHover = null;
         double bestDistSq = Double.MAX_VALUE;
@@ -1289,16 +1294,18 @@ public class MapScreen extends Screen {
                     top = cand;
                 }
             }
-            int sx = (int) Math.round(mapCX + (top.x() + 0.5 - centerX) * scale);
-            int sy = (int) Math.round(mapCY + (top.z() + 0.5 - centerZ) * scale);
-            if (sx < -10 || sx > this.width + 10 || sy < TOP_BAR - 10 || sy > this.height - BOTTOM_BAR + 10) {
+            int sxDev = (int) Math.round((mapCX + (top.x() + 0.5 - centerX) * scale) * dev);
+            int syDev = (int) Math.round((mapCY + (top.z() + 0.5 - centerZ) * scale) * dev);
+            if (sxDev < clipX0 - pad || sxDev > clipX1 + pad || syDev < clipY0 - pad || syDev > clipY1 + pad) {
                 continue;
             }
-            PinGroup pg = new PinGroup(top, col.size(), sx, sy);
+            PinGroup pg = new PinGroup(top, col.size(), sxDev, syDev);
             pins.add(pg);
 
-            if (inMap && Math.abs(mouseX - sx) <= hitR && Math.abs(mouseY - sy) <= hitR) {
-                double d2 = (mouseX - sx) * (mouseX - sx) + (mouseY - sy) * (mouseY - sy);
+            if (inMap && Math.abs(mxDev - sxDev) <= hitR && Math.abs(myDev - syDev) <= hitR) {
+                double dx = mxDev - sxDev;
+                double dy = myDev - syDev;
+                double d2 = dx * dx + dy * dy;
                 if (d2 < bestDistSq) {
                     bestDistSq = d2;
                     bestHover = pg;
@@ -1307,21 +1314,29 @@ public class MapScreen extends Screen {
         }
 
         for (PinGroup pg : pins) {
-            int sx = pg.sx();
-            int sy = pg.sy();
+            int sxDev = pg.sxDev();
+            int syDev = pg.syDev();
             boolean isHovered = pg == bestHover;
             int color = ContainerDatabase.colorFor(pg.top());
-            int outline = isHovered ? 0xFFFFFFFF : 0xE0000000;
-            g.fill(sx - pinR - 1, sy - pinR - 1, sx + pinR + 1, sy + pinR + 1, outline);
-            g.fill(sx - pinR, sy - pinR, sx + pinR, sy + pinR, color);
+            int outlineColor = isHovered ? 0xFFFFFFFF : 0xE0000000;
+            fillI(g, sxDev - pinR - outline, syDev - pinR - outline,
+                    sxDev + pinR + outline, syDev + pinR + outline, outlineColor);
+            fillI(g, sxDev - pinR, syDev - pinR, sxDev + pinR, syDev + pinR, color);
             if (!pg.top().opened()) {
-                g.fill(sx - 1, sy - 1, sx + 1, sy + 1, 0xFF14161C);
+                fillI(g, sxDev - innerDot, syDev - innerDot, sxDev + innerDot, syDev + innerDot, 0xFF14161C);
             }
             if (pg.count() > 1 && scale >= 0.75) {
                 String badge = String.valueOf(pg.count());
-                int bw = this.font.width(badge);
-                g.fill(sx + pinR - 2, sy + pinR - 4, sx + pinR + bw + 1, sy + pinR + 6, 0xE014161C);
-                g.text(this.font, badge, sx + pinR, sy + pinR - 3, 0xFFFFFFFF, false);
+                int bx = sxDev + pinR;
+                int by = syDev + pinR - (int) Math.round(3.0 * dev);
+                int bwDev = (int) Math.round(this.font.width(badge) * dev);
+                fillI(g, bx - (int) Math.round(2.0 * dev), by - (int) Math.round(dev),
+                        bx + bwDev + (int) Math.round(dev), by + (int) Math.round(9.0 * dev), 0xE014161C);
+                g.pose().pushMatrix();
+                g.pose().translate(bx, by);
+                g.pose().scale((float) dev, (float) dev);
+                g.text(this.font, badge, 0, 0, 0xFFFFFFFF, false);
+                g.pose().popMatrix();
             }
         }
         hoveredPin = bestHover;
@@ -1395,9 +1410,9 @@ public class MapScreen extends Screen {
     }
 
     private void updateZone(Minecraft mc, ClientLevel level, LocalPlayer player) {
-        int effR = Math.max(1, mc.options.getEffectiveRenderDistance());
+        int effR = Math.max(2, mc.options.getEffectiveRenderDistance());
         int scanR = effR + 1;
-        int scanRSq = scanR * scanR;
+        long effRSq = (long) effR * effR;
         int pcx = (int) Math.floor(player.getX() / 16.0);
         int pcz = (int) Math.floor(player.getZ() / 16.0);
         int side = scanR * 2 + 1;
@@ -1420,7 +1435,9 @@ public class MapScreen extends Screen {
                 boolean loaded = false;
                 if (ix < side) {
                     int dx = ix - scanR;
-                    if (dx * dx + dz * dz <= scanRSq && isLoaded(level, zoneMinX + ix, cz)) {
+                    long lx = Math.max(0, Math.abs(dx) - 2);
+                    long lz = Math.max(0, Math.abs(dz) - 2);
+                    if (lx * lx + lz * lz < effRSq && isLoaded(level, zoneMinX + ix, cz)) {
                         loaded = true;
                         zoneGrid[rowOff + ix] = true;
                     }
