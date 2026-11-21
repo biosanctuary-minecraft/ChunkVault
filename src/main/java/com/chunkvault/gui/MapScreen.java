@@ -493,6 +493,14 @@ public class MapScreen extends Screen {
         g.pose().pushMatrix();
         g.pose().scale(inv, inv);
 
+        if (hasProject && AreaPlan.isActive() && dimensionId.equals(AreaPlan.dimension())) {
+            int abx0 = (int) Math.round((mapCX + (AreaPlan.minCx() * 16.0 - centerX) * scale) * dev);
+            int abx1 = (int) Math.round((mapCX + ((AreaPlan.maxCx() + 1) * 16.0 - centerX) * scale) * dev);
+            int aby0 = (int) Math.round((mapCY + (AreaPlan.minCz() * 16.0 - centerZ) * scale) * dev);
+            int aby1 = (int) Math.round((mapCY + ((AreaPlan.maxCz() + 1) * 16.0 - centerZ) * scale) * dev);
+            fillI(g, abx0, aby0, abx1, aby1, 0x2A18A8E0);
+        }
+
         if (useTex && hasProject) {
             drawTerrainTextured(g, dimensionId, cache, mapCX, mapCY, minCx, maxCx, minCz, maxCz);
         }
@@ -1223,30 +1231,7 @@ public class MapScreen extends Screen {
             }
         }
 
-        int vMinX = Math.max(aMinX, minCx);
-        int vMaxX = Math.min(aMaxX, maxCx);
-        int vMinZ = Math.max(aMinZ, minCz);
-        int vMaxZ = Math.min(aMaxZ, maxCz);
-        long visArea = (long) (vMaxX - vMinX + 1) * (long) (vMaxZ - vMinZ + 1);
 
-        if (vMinX <= vMaxX && vMinZ <= vMaxZ && visArea > 0L && visArea <= 16384L) {
-            for (int cz = vMinZ; cz <= vMaxZ; cz++) {
-                int runStart = Integer.MIN_VALUE;
-                for (int cx = vMinX; cx <= vMaxX + 1; cx++) {
-                    boolean missing = cx <= vMaxX && !cache.containsKey(MapCache.key(cx, cz));
-                    if (missing && runStart == Integer.MIN_VALUE) {
-                        runStart = cx;
-                    } else if (!missing && runStart != Integer.MIN_VALUE) {
-                        int x0 = (int) Math.round((mapCX + (runStart * 16.0 - centerX) * scale) * dev);
-                        int x1 = (int) Math.round((mapCX + (cx * 16.0 - centerX) * scale) * dev);
-                        int y0 = (int) Math.round((mapCY + (cz * 16.0 - centerZ) * scale) * dev);
-                        int y1 = (int) Math.round((mapCY + ((cz + 1) * 16.0 - centerZ) * scale) * dev);
-                        fillI(g, x0, y0, x1, y1, 0x3620C8FF);
-                        runStart = Integer.MIN_VALUE;
-                    }
-                }
-            }
-        }
 
         int t = Math.max(2, (int) Math.round(dev));
         fillI(g, bx0, by0, bx1, by0 + t, 0xEE38D8FF);
