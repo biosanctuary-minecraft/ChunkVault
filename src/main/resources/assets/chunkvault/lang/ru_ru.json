@@ -162,6 +162,8 @@
   "chunkvault.settings.row.containers.desc": "Записывать содержимое открытых сундуков и шалкеров",
   "chunkvault.settings.row.unopened": "Показывать неоткрытые хранилища",
   "chunkvault.settings.row.unopened.desc": "Отображать неоткрытые контейнеры на карте и в базе",
+  "chunkvault.settings.row.player_inventory": "Сохранять инвентарь игрока",
+  "chunkvault.settings.row.player_inventory.desc": "Сохранять хотбар, инвентарь и экипировку при стопе",
   "chunkvault.settings.row.mobs": "Спавн мобов в сохранённом мире",
   "chunkvault.settings.row.mobs.desc": "Запретить или разрешить спавн мобов в экспорте",
   "chunkvault.settings.row.gen": "Вне записанной области",
