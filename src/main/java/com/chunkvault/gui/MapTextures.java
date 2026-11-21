@@ -24,6 +24,7 @@ final class MapTextures {
         DynamicTexture tex;
         NativeImage img;
         Identifier id;
+        int size;
         boolean needsUpload;
         boolean ready;
     }
@@ -116,7 +117,7 @@ final class MapTextures {
             if (lod == null) {
                 int cost = lodIdx == 0 ? 2 : 1;
                 if (buildLeft < cost) {
-                    return null;
+                    return fallbackReady(r, lodIdx);
                 }
                 buildLeft -= cost;
                 lod = createLod(lodIdx);
@@ -130,11 +131,25 @@ final class MapTextures {
                 lod.needsUpload = false;
                 lod.ready = true;
             }
-            return lod.ready ? lod : null;
+            return lod.ready ? lod : fallbackReady(r, lodIdx);
         } catch (Throwable t) {
             fail(t);
             return null;
         }
+    }
+
+    private static Lod fallbackReady(Region r, int preferred) {
+        for (int dist = 1; dist < 3; dist++) {
+            int lower = preferred - dist;
+            if (lower >= 0 && r.lods[lower] != null && r.lods[lower].ready) {
+                return r.lods[lower];
+            }
+            int higher = preferred + dist;
+            if (higher < 3 && r.lods[higher] != null && r.lods[higher].ready) {
+                return r.lods[higher];
+            }
+        }
+        return null;
     }
 
     private static Lod createLod(int lodIdx) {
@@ -153,6 +168,7 @@ final class MapTextures {
         lod.tex = tex;
         lod.img = img;
         lod.id = id;
+        lod.size = size;
         return lod;
     }
 
