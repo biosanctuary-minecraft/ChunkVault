@@ -51,6 +51,7 @@ public final class ContainerDatabase {
 
     public static final String CAT_CHESTS = "chests";
     public static final String CAT_SHULKERS = "shulkers";
+    public static final String CAT_ENDER = "ender";
     public static final String CAT_FURNACES = "furnaces";
     public static final String CAT_OTHER = "other";
 
@@ -93,6 +94,9 @@ public final class ContainerDatabase {
             String id = blockId == null ? "" : blockId.toLowerCase(Locale.ROOT);
             if (id.endsWith("shulker_box")) {
                 return CAT_SHULKERS;
+            }
+            if (id.endsWith(":ender_chest")) {
+                return CAT_ENDER;
             }
             if (id.contains("chest") || id.endsWith(":barrel")) {
                 return CAT_CHESTS;
