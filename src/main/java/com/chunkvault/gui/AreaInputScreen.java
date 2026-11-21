@@ -1,5 +1,6 @@
 package com.chunkvault.gui;
 
+import com.chunkvault.ChunkVaultClient;
 import com.chunkvault.Lang;
 import com.chunkvault.state.AreaPlan;
 import net.minecraft.client.Minecraft;
@@ -7,6 +8,7 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.KeyEvent;
 import net.minecraft.network.chat.Component;
 
 public class AreaInputScreen extends Screen {
@@ -15,6 +17,7 @@ public class AreaInputScreen extends Screen {
     private static final int CARD_H = 192;
 
     private final MapScreen parent;
+    private final long openedAtMs = System.currentTimeMillis();
     private boolean radiusMode;
 
     private String valX1;
@@ -299,6 +302,17 @@ public class AreaInputScreen extends Screen {
         }
 
         super.extractRenderState(g, mouseX, mouseY, partialTick);
+    }
+
+    @Override
+    public boolean keyPressed(KeyEvent event) {
+        if (System.currentTimeMillis() - openedAtMs >= 180L
+                && !(this.getFocused() instanceof EditBox eb && eb.canConsumeInput())
+                && ChunkVaultClient.matchesAreaCoords(event)) {
+            this.onClose();
+            return true;
+        }
+        return super.keyPressed(event);
     }
 
     @Override
