@@ -151,8 +151,9 @@ public class ExplorerScreen extends Screen {
         }
         String name = entries.get(selected).name();
         ProjectMap.open(name);
-        Minecraft.getInstance().setScreenAndShow(parent);
-        parent.showToast(Lang.s("toast.project_opened", name));
+        MapScreen target = parent != null ? parent : new MapScreen();
+        Minecraft.getInstance().setScreenAndShow(target);
+        target.showToast(Lang.s("toast.project_opened", name));
     }
 
     private void openFolder() {
