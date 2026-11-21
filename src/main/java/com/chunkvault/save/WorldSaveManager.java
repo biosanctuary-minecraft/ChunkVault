@@ -132,7 +132,7 @@ public final class WorldSaveManager {
             return false;
         }
         try {
-            ContainerDatabase.putUnopenedBatch(level, chunk.getBlockEntities().values());
+            ContainerDatabase.syncChunkContainers(level, chunk);
             CompoundTag tag = ChunkNbtWriter.write(level, chunk,
                     (pos, be) -> containerOverride(level, pos, be));
 
@@ -229,7 +229,6 @@ public final class WorldSaveManager {
             Thread.currentThread().interrupt();
         }
         flushEntities();
-        ContainerDatabase.flushNow();
         for (SimpleRegionFile region : openRegions.values()) {
             try {
                 region.close();
@@ -238,6 +237,7 @@ public final class WorldSaveManager {
             }
         }
         openRegions.clear();
+        ContainerDatabase.flushNow();
         if (playerTag != null && uuid != null) {
             PlayerDataWriter.writeToWorld(rootDir, uuid, playerTag);
         }
