@@ -281,5 +281,12 @@
   "chunkvault.db.sort.farthest": "Дальние",
   "chunkvault.db.sort.filled_desc": "Полнее",
   "chunkvault.db.sort.filled_asc": "Пустее",
-  "chunkvault.db.sort.name": "Имя А–Я"
+  "chunkvault.db.sort.name": "Имя А–Я",
+  "chunkvault.explorer.delete": "Удалить",
+  "chunkvault.explorer.delete_confirm": "Точно?",
+  "chunkvault.explorer.delete_confirm_hint": "Нажмите «Точно?» ещё раз, чтобы удалить «%s» навсегда",
+  "chunkvault.explorer.deleting": "Удаление…",
+  "chunkvault.explorer.deleted": "Проект удалён: %s",
+  "chunkvault.explorer.delete_error": "Ошибка удаления: %s",
+  "chunkvault.explorer.active_tag": "ОТКРЫТ"
 }
