@@ -35,6 +35,7 @@ public final class ChunkVaultSettings {
 
     private volatile boolean saveEntities = true;
     private volatile boolean saveContainers = true;
+    private volatile boolean savePlayerInventory = true;
     private volatile boolean preventMobSpawning = true;
     private volatile boolean useSeed = false;
     private volatile long seed = 0L;
@@ -63,6 +64,15 @@ public final class ChunkVaultSettings {
 
     public void setSaveContainers(boolean value) {
         this.saveContainers = value;
+        save();
+    }
+
+    public boolean savePlayerInventory() {
+        return savePlayerInventory;
+    }
+
+    public void setSavePlayerInventory(boolean value) {
+        this.savePlayerInventory = value;
         save();
     }
 
@@ -129,6 +139,7 @@ public final class ChunkVaultSettings {
             p.load(in);
             saveEntities = Boolean.parseBoolean(p.getProperty("saveEntities", "true"));
             saveContainers = Boolean.parseBoolean(p.getProperty("saveContainers", "true"));
+            savePlayerInventory = Boolean.parseBoolean(p.getProperty("savePlayerInventory", "true"));
             preventMobSpawning = Boolean.parseBoolean(p.getProperty("preventMobSpawning", "true"));
             useSeed = Boolean.parseBoolean(p.getProperty("useSeed", "false"));
             seed = Long.parseLong(p.getProperty("seed", "0"));
@@ -147,6 +158,7 @@ public final class ChunkVaultSettings {
         Properties p = new Properties();
         p.setProperty("saveEntities", Boolean.toString(saveEntities));
         p.setProperty("saveContainers", Boolean.toString(saveContainers));
+        p.setProperty("savePlayerInventory", Boolean.toString(savePlayerInventory));
         p.setProperty("preventMobSpawning", Boolean.toString(preventMobSpawning));
         p.setProperty("useSeed", Boolean.toString(useSeed));
         p.setProperty("seed", Long.toString(seed));
