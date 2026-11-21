@@ -1,12 +1,15 @@
 package com.chunkvault.gui;
 
+import com.chunkvault.ChunkVaultClient;
 import com.chunkvault.Lang;
 import com.chunkvault.state.RecordingState;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 
 import java.io.IOException;
@@ -35,6 +38,7 @@ public class ExplorerScreen extends Screen {
     private record Entry(String name, String date) {}
 
     private final MapScreen parent;
+    private final long openedAtMs = System.currentTimeMillis();
     private final List<Entry> entries = new ArrayList<>();
     private int selected = -1;
     private int scroll;
@@ -113,6 +117,17 @@ public class ExplorerScreen extends Screen {
         this.addRenderableWidget(Button.builder(Lang.c("common.back"), b -> this.onClose())
                 .bounds(x, y0 + 52, W, 20)
                 .build());
+    }
+
+    @Override
+    public boolean keyPressed(KeyEvent event) {
+        if (System.currentTimeMillis() - openedAtMs >= 180L
+                && !(this.getFocused() instanceof EditBox eb && eb.canConsumeInput())
+                && ChunkVaultClient.matchesOpenProjects(event)) {
+            this.onClose();
+            return true;
+        }
+        return super.keyPressed(event);
     }
 
     @Override
