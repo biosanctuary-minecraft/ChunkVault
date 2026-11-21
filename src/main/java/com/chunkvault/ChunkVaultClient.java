@@ -13,6 +13,7 @@ import com.chunkvault.save.VoidWorldGenBuilder;
 import com.chunkvault.state.AreaEtaTracker;
 import com.chunkvault.state.AreaPlan;
 import com.chunkvault.state.AutoRecord;
+import com.chunkvault.state.ChunkVaultSettings;
 import com.chunkvault.state.DirtyChunkTracker;
 import com.chunkvault.state.LastInteraction;
 import com.chunkvault.state.RecordingState;
@@ -369,9 +370,7 @@ public class ChunkVaultClient implements ClientModInitializer {
         if (player != null && level != null) {
             uuid = Minecraft.getInstance().getUser().getProfileId();
             playerTag = PlayerDataWriter.buildPlayerTag(
-                    player.getX(), player.getY(), player.getZ(),
-                    player.getYRot(), player.getXRot(),
-                    level.dimension().identifier().toString());
+                    player, level, ChunkVaultSettings.get().savePlayerInventory());
         }
 
         LastInteraction.clear();
