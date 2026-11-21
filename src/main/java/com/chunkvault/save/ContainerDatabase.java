@@ -13,6 +13,7 @@ import net.minecraft.world.Nameable;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.ChiseledBookShelfBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.ChestType;
 
@@ -26,14 +27,15 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public final class ContainerDatabase {
@@ -105,15 +107,21 @@ public final class ContainerDatabase {
         }
     }
 
+    private static final Comparator<ContainerEntry> BY_Y_DESC =
+            Comparator.comparingInt(ContainerEntry::y).reversed();
+
     private static final Map<String, ContainerEntry> ENTRIES = new ConcurrentHashMap<>();
     private static final Object INDEX_LOCK = new Object();
-    private static volatile Map<String, Map<Long, List<ContainerEntry>>> byChunk = Map.of();
-    private static volatile Map<String, Map<Long, List<ContainerEntry>>> byColumn = Map.of();
+    private static final Object WRITE_LOCK = new Object();
+    private static final Map<String, Map<Long, List<ContainerEntry>>> BY_CHUNK = new ConcurrentHashMap<>();
+    private static final Map<String, Map<Long, List<ContainerEntry>>> BY_COLUMN = new ConcurrentHashMap<>();
     private static volatile Path activeProjectDir;
     private static volatile boolean showUnopened = loadShowUnopenedPref();
+    private static volatile boolean dirty;
+    private static final AtomicBoolean SAVE_SCHEDULED = new AtomicBoolean();
     private static final AtomicInteger REVISION = new AtomicInteger();
 
-    private static final ExecutorService IO = Executors.newSingleThreadExecutor(r -> {
+    private static final ScheduledExecutorService IO = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "chunkvault-containers-io");
         t.setDaemon(true);
         return t;
@@ -165,11 +173,13 @@ public final class ContainerDatabase {
             try {
                 Path f = prefsFile();
                 Files.createDirectories(f.getParent());
+                Path tmp = f.resolveSibling(f.getFileName() + ".tmp");
                 Properties p = new Properties();
                 p.setProperty("showUnopened", Boolean.toString(value));
-                try (var out = Files.newOutputStream(f)) {
+                try (var out = Files.newOutputStream(tmp)) {
                     p.store(out, "ChunkVault Container Preferences");
                 }
+                Files.move(tmp, f, StandardCopyOption.REPLACE_EXISTING);
             } catch (Exception ignored) {
             }
         });
@@ -188,9 +198,13 @@ public final class ContainerDatabase {
     }
 
     public static void loadForProject(Path projectDir) {
+        flushNow();
         synchronized (INDEX_LOCK) {
             ENTRIES.clear();
+            BY_CHUNK.clear();
+            BY_COLUMN.clear();
             activeProjectDir = projectDir;
+            dirty = false;
             readFile(projectDir.resolve("chunkvault_containers.dat"));
             rebuildIndexesLocked();
             REVISION.incrementAndGet();
@@ -204,12 +218,41 @@ public final class ContainerDatabase {
     }
 
     public static void clear() {
+        flushNow();
         synchronized (INDEX_LOCK) {
             ENTRIES.clear();
+            BY_CHUNK.clear();
+            BY_COLUMN.clear();
             activeProjectDir = null;
-            byChunk = Map.of();
-            byColumn = Map.of();
+            dirty = false;
             REVISION.incrementAndGet();
+        }
+    }
+
+    public static void flushNow() {
+        Path dir;
+        List<ContainerEntry> snapshot;
+        synchronized (INDEX_LOCK) {
+            if (!dirty || activeProjectDir == null) {
+                return;
+            }
+            dirty = false;
+            dir = activeProjectDir;
+            snapshot = new ArrayList<>(ENTRIES.values());
+        }
+        writeFile(dir.resolve("chunkvault_containers.dat"), snapshot);
+    }
+
+    private static void scheduleSaveLocked() {
+        dirty = true;
+        if (activeProjectDir == null) {
+            return;
+        }
+        if (SAVE_SCHEDULED.compareAndSet(false, true)) {
+            IO.schedule(() -> {
+                SAVE_SCHEDULED.set(false);
+                flushNow();
+            }, 1500, TimeUnit.MILLISECONDS);
         }
     }
 
@@ -219,15 +262,11 @@ public final class ContainerDatabase {
             if (entry == null) {
                 return;
             }
-            Path targetDir;
             synchronized (INDEX_LOCK) {
                 ENTRIES.put(entry.key(), entry);
-                rebuildIndexesLocked();
+                indexEntryLocked(entry);
                 REVISION.incrementAndGet();
-                targetDir = activeProjectDir;
-            }
-            if (targetDir != null) {
-                saveAsync(targetDir);
+                scheduleSaveLocked();
             }
         } catch (Throwable t) {
             System.err.println("[ChunkVault] Failed to store container at " + be.getBlockPos() + ": " + t);
@@ -241,7 +280,8 @@ public final class ContainerDatabase {
         List<ContainerEntry> added = null;
         String dimension = level.dimension().identifier().toString();
         for (BlockEntity be : blockEntities) {
-            if (!(be instanceof Container container) || container.getContainerSize() < 3) {
+            if (!(be instanceof Container container) || container.getContainerSize() < 3
+                    || be instanceof ChiseledBookShelfBlockEntity) {
                 continue;
             }
             BlockPos pos = be.getBlockPos();
@@ -263,24 +303,51 @@ public final class ContainerDatabase {
         if (added == null || added.isEmpty()) {
             return;
         }
-        Path targetDir;
-        boolean changed = false;
         synchronized (INDEX_LOCK) {
+            boolean changed = false;
             for (ContainerEntry e : added) {
                 if (!ENTRIES.containsKey(e.key())) {
                     ENTRIES.put(e.key(), e);
+                    indexEntryLocked(e);
                     changed = true;
                 }
             }
             if (changed) {
-                rebuildIndexesLocked();
                 REVISION.incrementAndGet();
+                scheduleSaveLocked();
             }
-            targetDir = activeProjectDir;
         }
-        if (changed && targetDir != null) {
-            saveAsync(targetDir);
+    }
+
+    private static void indexEntryLocked(ContainerEntry e) {
+        Map<Long, List<ContainerEntry>> dimChunks = BY_CHUNK.computeIfAbsent(e.dimension(), k -> new ConcurrentHashMap<>());
+        long chunkKey = packCoords(e.chunkX(), e.chunkZ());
+        List<ContainerEntry> oldChunk = dimChunks.get(chunkKey);
+        List<ContainerEntry> nextChunk = new ArrayList<>(oldChunk == null ? 1 : oldChunk.size() + 1);
+        if (oldChunk != null) {
+            for (ContainerEntry cur : oldChunk) {
+                if (!cur.key().equals(e.key())) {
+                    nextChunk.add(cur);
+                }
+            }
         }
+        nextChunk.add(e);
+        dimChunks.put(chunkKey, List.copyOf(nextChunk));
+
+        Map<Long, List<ContainerEntry>> dimCols = BY_COLUMN.computeIfAbsent(e.dimension(), k -> new ConcurrentHashMap<>());
+        long colKey = packCoords(e.x(), e.z());
+        List<ContainerEntry> oldCol = dimCols.get(colKey);
+        List<ContainerEntry> nextCol = new ArrayList<>(oldCol == null ? 1 : oldCol.size() + 1);
+        if (oldCol != null) {
+            for (ContainerEntry cur : oldCol) {
+                if (!cur.key().equals(e.key())) {
+                    nextCol.add(cur);
+                }
+            }
+        }
+        nextCol.add(e);
+        nextCol.sort(BY_Y_DESC);
+        dimCols.put(colKey, List.copyOf(nextCol));
     }
 
     private static ContainerEntry buildEntry(ClientLevel level, BlockEntity be, boolean opened) {
@@ -382,7 +449,7 @@ public final class ContainerDatabase {
     }
 
     public static List<ContainerEntry> inChunkRange(String dimension, int minCx, int maxCx, int minCz, int maxCz) {
-        Map<Long, List<ContainerEntry>> dimMap = byChunk.get(dimension);
+        Map<Long, List<ContainerEntry>> dimMap = BY_CHUNK.get(dimension);
         if (dimMap == null || dimMap.isEmpty()) {
             return List.of();
         }
@@ -399,6 +466,9 @@ public final class ContainerDatabase {
             }
         } else {
             for (List<ContainerEntry> list : dimMap.values()) {
+                if (list.isEmpty()) {
+                    continue;
+                }
                 ContainerEntry first = list.get(0);
                 int cx = first.chunkX();
                 int cz = first.chunkZ();
@@ -411,7 +481,7 @@ public final class ContainerDatabase {
     }
 
     public static List<ContainerEntry> atColumn(String dimension, int x, int z) {
-        Map<Long, List<ContainerEntry>> dimMap = byColumn.get(dimension);
+        Map<Long, List<ContainerEntry>> dimMap = BY_COLUMN.get(dimension);
         if (dimMap == null) {
             return List.of();
         }
@@ -437,7 +507,6 @@ public final class ContainerDatabase {
 
     public static int trimToArea(String dimension, int minCx, int maxCx, int minCz, int maxCz) {
         int removed = 0;
-        Path targetDir;
         synchronized (INDEX_LOCK) {
             var it = ENTRIES.entrySet().iterator();
             while (it.hasNext()) {
@@ -451,76 +520,81 @@ public final class ContainerDatabase {
             if (removed > 0) {
                 rebuildIndexesLocked();
                 REVISION.incrementAndGet();
+                dirty = true;
             }
-            targetDir = activeProjectDir;
         }
-        if (removed > 0 && targetDir != null) {
-            saveAsync(targetDir);
+        if (removed > 0) {
+            flushNow();
         }
         return removed;
     }
 
     private static void rebuildIndexesLocked() {
-        Map<String, Map<Long, List<ContainerEntry>>> chunks = new HashMap<>();
-        Map<String, Map<Long, List<ContainerEntry>>> columns = new HashMap<>();
+        BY_CHUNK.clear();
+        BY_COLUMN.clear();
+        Map<String, Map<Long, List<ContainerEntry>>> tmpChunks = new ConcurrentHashMap<>();
+        Map<String, Map<Long, List<ContainerEntry>>> tmpCols = new ConcurrentHashMap<>();
 
         for (ContainerEntry e : ENTRIES.values()) {
-            chunks.computeIfAbsent(e.dimension(), k -> new HashMap<>())
+            tmpChunks.computeIfAbsent(e.dimension(), k -> new ConcurrentHashMap<>())
                     .computeIfAbsent(packCoords(e.chunkX(), e.chunkZ()), k -> new ArrayList<>())
                     .add(e);
-            columns.computeIfAbsent(e.dimension(), k -> new HashMap<>())
+            tmpCols.computeIfAbsent(e.dimension(), k -> new ConcurrentHashMap<>())
                     .computeIfAbsent(packCoords(e.x(), e.z()), k -> new ArrayList<>())
                     .add(e);
         }
 
-        Comparator<ContainerEntry> byYDesc = Comparator.comparingInt(ContainerEntry::y).reversed();
-        for (Map<Long, List<ContainerEntry>> dimCols : columns.values()) {
-            for (List<ContainerEntry> list : dimCols.values()) {
-                list.sort(byYDesc);
+        for (var dimEntry : tmpChunks.entrySet()) {
+            Map<Long, List<ContainerEntry>> map = new ConcurrentHashMap<>();
+            for (var e : dimEntry.getValue().entrySet()) {
+                map.put(e.getKey(), List.copyOf(e.getValue()));
             }
+            BY_CHUNK.put(dimEntry.getKey(), map);
         }
-
-        byChunk = chunks;
-        byColumn = columns;
-    }
-
-    private static void saveAsync(Path dir) {
-        List<ContainerEntry> snapshot = new ArrayList<>(ENTRIES.values());
-        IO.execute(() -> writeFile(dir.resolve("chunkvault_containers.dat"), snapshot));
+        for (var dimEntry : tmpCols.entrySet()) {
+            Map<Long, List<ContainerEntry>> map = new ConcurrentHashMap<>();
+            for (var e : dimEntry.getValue().entrySet()) {
+                e.getValue().sort(BY_Y_DESC);
+                map.put(e.getKey(), List.copyOf(e.getValue()));
+            }
+            BY_COLUMN.put(dimEntry.getKey(), map);
+        }
     }
 
     private static void writeFile(Path file, List<ContainerEntry> entries) {
-        try {
-            Files.createDirectories(file.getParent());
-            CompoundTag root = new CompoundTag();
-            for (ContainerEntry e : entries) {
-                CompoundTag tag = new CompoundTag();
-                tag.putString("type", e.blockId());
-                tag.put("data", e.blockEntityTag());
-                if (e.customName() != null && !e.customName().isEmpty()) {
-                    tag.putString("customName", e.customName());
+        synchronized (WRITE_LOCK) {
+            try {
+                Files.createDirectories(file.getParent());
+                CompoundTag root = new CompoundTag();
+                for (ContainerEntry e : entries) {
+                    CompoundTag tag = new CompoundTag();
+                    tag.putString("type", e.blockId());
+                    tag.put("data", e.blockEntityTag());
+                    if (e.customName() != null && !e.customName().isEmpty()) {
+                        tag.putString("customName", e.customName());
+                    }
+                    tag.putInt("slotCount", e.slotCount());
+                    tag.putInt("filledSlots", e.filledSlots());
+                    tag.putLong("updatedAt", e.updatedAt());
+                    tag.putBoolean("opened", e.opened());
+                    if (e.chestType() != null && !e.chestType().isEmpty()) {
+                        tag.putString("chestType", e.chestType());
+                    }
+                    if (e.connectedPos() != null) {
+                        tag.putInt("connX", e.connectedPos().getX());
+                        tag.putInt("connY", e.connectedPos().getY());
+                        tag.putInt("connZ", e.connectedPos().getZ());
+                    }
+                    root.put(e.key(), tag);
                 }
-                tag.putInt("slotCount", e.slotCount());
-                tag.putInt("filledSlots", e.filledSlots());
-                tag.putLong("updatedAt", e.updatedAt());
-                tag.putBoolean("opened", e.opened());
-                if (e.chestType() != null && !e.chestType().isEmpty()) {
-                    tag.putString("chestType", e.chestType());
-                }
-                if (e.connectedPos() != null) {
-                    tag.putInt("connX", e.connectedPos().getX());
-                    tag.putInt("connY", e.connectedPos().getY());
-                    tag.putInt("connZ", e.connectedPos().getZ());
-                }
-                root.put(e.key(), tag);
+                ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+                NbtIo.write(root, new DataOutputStream(bytes));
+                Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
+                Files.write(tmp, bytes.toByteArray());
+                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
+            } catch (Exception e) {
+                System.err.println("[ChunkVault] Failed to write chunkvault_containers.dat: " + e);
             }
-            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-            NbtIo.write(root, new DataOutputStream(bytes));
-            Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
-            Files.write(tmp, bytes.toByteArray());
-            Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
-        } catch (Exception e) {
-            System.err.println("[ChunkVault] Failed to write chunkvault_containers.dat: " + e);
         }
     }
 
