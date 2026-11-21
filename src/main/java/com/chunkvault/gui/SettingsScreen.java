@@ -19,7 +19,7 @@ import java.util.Locale;
 public class SettingsScreen extends Screen {
 
     private static final int ROW_H = 28;
-    private static final int ROW_COUNT = 13;
+    private static final int ROW_COUNT = 14;
     private static final int PANEL_MAX_W = 460;
     private static final int BADGE_W = 96;
     private static final int STEP_BTN_W = 18;
@@ -63,7 +63,7 @@ public class SettingsScreen extends Screen {
         clampScroll();
 
         int contentRight = maxScroll() > 0 ? listX1 - SCROLLBAR_W - 2 : listX1;
-        seedBox = new EditBox(this.font, contentRight - 6 - SEED_W, listY0 + 7 * ROW_H + 4, SEED_W, 19, Lang.c("settings.seed_box"));
+        seedBox = new EditBox(this.font, contentRight - 6 - SEED_W, listY0 + 8 * ROW_H + 4, SEED_W, 19, Lang.c("settings.seed_box"));
         seedBox.setMaxLength(20);
         seedBox.setValue(seedText == null ? "" : seedText);
         seedBox.setResponder(s -> seedText = s);
@@ -166,7 +166,7 @@ public class SettingsScreen extends Screen {
         ChunkVaultSettings s = ChunkVaultSettings.get();
 
         if (seedBox != null) {
-            int sy = listY0 + 7 * ROW_H - scroll + 4;
+            int sy = listY0 + 8 * ROW_H - scroll + 4;
             boolean vis = sy >= listY0 && sy + 19 <= listY1;
             seedBox.setX(contentRight - 6 - SEED_W);
             seedBox.setY(sy);
@@ -196,41 +196,45 @@ public class SettingsScreen extends Screen {
                 Lang.s("settings.row.player_inventory"), Lang.s("settings.row.player_inventory.desc"),
                 s.savePlayerInventory() ? Lang.s("common.on") : Lang.s("common.off"), s.savePlayerInventory());
 
-        drawToggleRow(g, 5, contentRight, mouseX, mouseY, 0xFFFF6060,
+        drawToggleRow(g, 5, contentRight, mouseX, mouseY, 0xFF28B8A8,
+                Lang.s("settings.row.ender_chest"), Lang.s("settings.row.ender_chest.desc"),
+                s.saveEnderChest() ? Lang.s("common.on") : Lang.s("common.off"), s.saveEnderChest());
+
+        drawToggleRow(g, 6, contentRight, mouseX, mouseY, 0xFFFF6060,
                 Lang.s("settings.row.mobs"), Lang.s("settings.row.mobs.desc"),
                 s.preventMobSpawning() ? Lang.s("settings.mobs.blocked") : Lang.s("settings.mobs.allowed"),
                 s.preventMobSpawning());
 
-        drawToggleRow(g, 6, contentRight, mouseX, mouseY, 0xFFA870FF,
+        drawToggleRow(g, 7, contentRight, mouseX, mouseY, 0xFFA870FF,
                 Lang.s("settings.row.gen"), Lang.s("settings.row.gen.desc"),
                 s.useSeed() ? Lang.s("settings.gen.seed_short") : Lang.s("settings.gen.void"),
                 s.useSeed());
 
-        drawSeedRow(g, 7, contentRight, mouseX, mouseY, s.useSeed());
+        drawSeedRow(g, 8, contentRight, mouseX, mouseY, s.useSeed());
 
-        drawToggleRow(g, 8, contentRight, mouseX, mouseY, 0xFF38D8FF,
+        drawToggleRow(g, 9, contentRight, mouseX, mouseY, 0xFF38D8FF,
                 Lang.s("settings.row.minimap"), Lang.s("settings.row.minimap.desc"),
                 s.minimapEnabled() ? Lang.s("common.on") : Lang.s("common.off"), s.minimapEnabled());
 
-        drawActionRow(g, 9, contentRight, mouseX, mouseY, s.minimapEnabled() ? 0xFF2AA8C4 : 0xFF3E4454,
+        drawActionRow(g, 10, contentRight, mouseX, mouseY, s.minimapEnabled() ? 0xFF2AA8C4 : 0xFF3E4454,
                 Lang.s("settings.row.minimap_pos"), Lang.s("settings.row.minimap_pos.desc"),
                 Lang.s("settings.minimap.edit"), s.minimapEnabled());
 
-        drawStepperRow(g, 10, contentRight, mouseX, mouseY, 0xFF2AA8C4,
+        drawStepperRow(g, 11, contentRight, mouseX, mouseY, 0xFF2AA8C4,
                 Lang.s("settings.row.minimap_size"), Lang.s("settings.row.minimap_size.desc"),
                 Lang.s("settings.minimap.size_px", s.minimapSize()),
                 s.minimapEnabled(),
                 s.minimapSize() > ChunkVaultSettings.MINIMAP_MIN_SIZE,
                 s.minimapSize() < ChunkVaultSettings.MINIMAP_MAX_SIZE);
 
-        drawStepperRow(g, 11, contentRight, mouseX, mouseY, 0xFF2AA8C4,
+        drawStepperRow(g, 12, contentRight, mouseX, mouseY, 0xFF2AA8C4,
                 Lang.s("settings.row.minimap_zoom"), Lang.s("settings.row.minimap_zoom.desc"),
                 formatZoom(s.minimapZoom()),
                 s.minimapEnabled(),
                 s.minimapZoom() > ChunkVaultSettings.MINIMAP_ZOOMS[0] + 0.001,
                 s.minimapZoom() < ChunkVaultSettings.MINIMAP_ZOOMS[ChunkVaultSettings.MINIMAP_ZOOMS.length - 1] - 0.001);
 
-        drawActionRow(g, 12, contentRight, mouseX, mouseY, 0xFF4A90E2,
+        drawActionRow(g, 13, contentRight, mouseX, mouseY, 0xFF4A90E2,
                 Lang.s("settings.row.hotkeys"), Lang.s("settings.row.hotkeys.desc"),
                 Lang.s("settings.row.open_arrow"), true);
 
@@ -422,7 +426,7 @@ public class SettingsScreen extends Screen {
                 && mx >= listX0 && mx < contentRight && my >= listY0 && my < listY1) {
             int idx = (int) ((my - listY0 + scroll) / ROW_H);
             ChunkVaultSettings s = ChunkVaultSettings.get();
-            if (idx == 10 || idx == 11) {
+            if (idx == 11 || idx == 12) {
                 if (!s.minimapEnabled()) {
                     return true;
                 }
@@ -438,7 +442,7 @@ public class SettingsScreen extends Screen {
                 } else {
                     dir = 1;
                 }
-                if (idx == 10) {
+                if (idx == 11) {
                     s.stepMinimapSize(dir);
                 } else {
                     s.stepMinimapZoom(dir);
@@ -448,7 +452,7 @@ public class SettingsScreen extends Screen {
             if (btn != InputConstants.MOUSE_BUTTON_LEFT) {
                 return super.mouseClicked(event, isDoubleClick);
             }
-            if (idx == 7) {
+            if (idx == 8) {
                 return super.mouseClicked(event, isDoubleClick);
             }
             switch (idx) {
@@ -486,25 +490,29 @@ public class SettingsScreen extends Screen {
                     return true;
                 }
                 case 5 -> {
-                    s.setPreventMobSpawning(!s.preventMobSpawning());
+                    s.setSaveEnderChest(!s.saveEnderChest());
                     return true;
                 }
                 case 6 -> {
+                    s.setPreventMobSpawning(!s.preventMobSpawning());
+                    return true;
+                }
+                case 7 -> {
                     s.setUseSeed(!s.useSeed());
                     return true;
                 }
-                case 8 -> {
+                case 9 -> {
                     s.setMinimapEnabled(!s.minimapEnabled());
                     return true;
                 }
-                case 9 -> {
+                case 10 -> {
                     if (s.minimapEnabled()) {
                         applySeed();
                         Minecraft.getInstance().setScreenAndShow(new MinimapLayoutScreen(this));
                     }
                     return true;
                 }
-                case 12 -> {
+                case 13 -> {
                     applySeed();
                     Minecraft.getInstance().setScreenAndShow(new HotkeysScreen(this));
                     return true;
