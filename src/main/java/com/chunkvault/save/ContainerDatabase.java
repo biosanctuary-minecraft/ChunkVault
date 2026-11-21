@@ -1,5 +1,6 @@
 package com.chunkvault.save;
 
+import com.chunkvault.state.MapPinFilter;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
@@ -27,6 +28,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -44,6 +46,9 @@ public final class ContainerDatabase {
     public static final String CAT_SHULKERS = "shulkers";
     public static final String CAT_FURNACES = "furnaces";
     public static final String CAT_OTHER = "other";
+
+    private static final Comparator<ContainerEntry> BY_Y_DESC =
+            Comparator.comparingInt(ContainerEntry::y).reversed();
 
     public record ContainerEntry(
             String key,
@@ -107,19 +112,15 @@ public final class ContainerDatabase {
         }
     }
 
-    private static final Comparator<ContainerEntry> BY_Y_DESC =
-            Comparator.comparingInt(ContainerEntry::y).reversed();
-
     private static final Map<String, ContainerEntry> ENTRIES = new ConcurrentHashMap<>();
     private static final Object INDEX_LOCK = new Object();
-    private static final Object WRITE_LOCK = new Object();
     private static final Map<String, Map<Long, List<ContainerEntry>>> BY_CHUNK = new ConcurrentHashMap<>();
     private static final Map<String, Map<Long, List<ContainerEntry>>> BY_COLUMN = new ConcurrentHashMap<>();
     private static volatile Path activeProjectDir;
     private static volatile boolean showUnopened = loadShowUnopenedPref();
-    private static volatile boolean dirty;
-    private static final AtomicBoolean SAVE_SCHEDULED = new AtomicBoolean();
     private static final AtomicInteger REVISION = new AtomicInteger();
+    private static final AtomicBoolean SAVE_SCHEDULED = new AtomicBoolean();
+    private static volatile boolean dirty;
 
     private static final ScheduledExecutorService IO = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "chunkvault-containers-io");
@@ -142,10 +143,17 @@ public final class ContainerDatabase {
     }
 
     public static boolean toggleShowUnopened() {
-        showUnopened = !showUnopened;
+        setShowUnopened(!showUnopened);
+        return showUnopened;
+    }
+
+    public static void setShowUnopened(boolean value) {
+        if (showUnopened == value) {
+            return;
+        }
+        showUnopened = value;
         saveShowUnopenedPref(showUnopened);
         REVISION.incrementAndGet();
-        return showUnopened;
     }
 
     private static Path prefsFile() {
@@ -173,9 +181,9 @@ public final class ContainerDatabase {
             try {
                 Path f = prefsFile();
                 Files.createDirectories(f.getParent());
-                Path tmp = f.resolveSibling(f.getFileName() + ".tmp");
                 Properties p = new Properties();
                 p.setProperty("showUnopened", Boolean.toString(value));
+                Path tmp = f.resolveSibling(f.getFileName() + ".tmp");
                 try (var out = Files.newOutputStream(tmp)) {
                     p.store(out, "ChunkVault Container Preferences");
                 }
@@ -201,8 +209,6 @@ public final class ContainerDatabase {
         flushNow();
         synchronized (INDEX_LOCK) {
             ENTRIES.clear();
-            BY_CHUNK.clear();
-            BY_COLUMN.clear();
             activeProjectDir = projectDir;
             dirty = false;
             readFile(projectDir.resolve("chunkvault_containers.dat"));
@@ -221,39 +227,27 @@ public final class ContainerDatabase {
         flushNow();
         synchronized (INDEX_LOCK) {
             ENTRIES.clear();
-            BY_CHUNK.clear();
-            BY_COLUMN.clear();
             activeProjectDir = null;
             dirty = false;
+            BY_CHUNK.clear();
+            BY_COLUMN.clear();
             REVISION.incrementAndGet();
         }
     }
 
     public static void flushNow() {
-        Path dir;
+        Path targetDir;
         List<ContainerEntry> snapshot;
         synchronized (INDEX_LOCK) {
+            SAVE_SCHEDULED.set(false);
             if (!dirty || activeProjectDir == null) {
                 return;
             }
             dirty = false;
-            dir = activeProjectDir;
+            targetDir = activeProjectDir;
             snapshot = new ArrayList<>(ENTRIES.values());
         }
-        writeFile(dir.resolve("chunkvault_containers.dat"), snapshot);
-    }
-
-    private static void scheduleSaveLocked() {
-        dirty = true;
-        if (activeProjectDir == null) {
-            return;
-        }
-        if (SAVE_SCHEDULED.compareAndSet(false, true)) {
-            IO.schedule(() -> {
-                SAVE_SCHEDULED.set(false);
-                flushNow();
-            }, 1500, TimeUnit.MILLISECONDS);
-        }
+        writeFile(targetDir.resolve("chunkvault_containers.dat"), snapshot);
     }
 
     public static void put(ClientLevel level, BlockEntity be) {
@@ -264,8 +258,9 @@ public final class ContainerDatabase {
             }
             synchronized (INDEX_LOCK) {
                 ENTRIES.put(entry.key(), entry);
-                indexEntryLocked(entry);
+                indexSingleLocked(entry);
                 REVISION.incrementAndGet();
+                dirty = true;
                 scheduleSaveLocked();
             }
         } catch (Throwable t) {
@@ -280,8 +275,10 @@ public final class ContainerDatabase {
         List<ContainerEntry> added = null;
         String dimension = level.dimension().identifier().toString();
         for (BlockEntity be : blockEntities) {
-            if (!(be instanceof Container container) || container.getContainerSize() < 3
-                    || be instanceof ChiseledBookShelfBlockEntity) {
+            if (be instanceof ChiseledBookShelfBlockEntity) {
+                continue;
+            }
+            if (!(be instanceof Container container) || container.getContainerSize() < 3) {
                 continue;
             }
             BlockPos pos = be.getBlockPos();
@@ -308,46 +305,16 @@ public final class ContainerDatabase {
             for (ContainerEntry e : added) {
                 if (!ENTRIES.containsKey(e.key())) {
                     ENTRIES.put(e.key(), e);
-                    indexEntryLocked(e);
+                    indexSingleLocked(e);
                     changed = true;
                 }
             }
             if (changed) {
                 REVISION.incrementAndGet();
+                dirty = true;
                 scheduleSaveLocked();
             }
         }
-    }
-
-    private static void indexEntryLocked(ContainerEntry e) {
-        Map<Long, List<ContainerEntry>> dimChunks = BY_CHUNK.computeIfAbsent(e.dimension(), k -> new ConcurrentHashMap<>());
-        long chunkKey = packCoords(e.chunkX(), e.chunkZ());
-        List<ContainerEntry> oldChunk = dimChunks.get(chunkKey);
-        List<ContainerEntry> nextChunk = new ArrayList<>(oldChunk == null ? 1 : oldChunk.size() + 1);
-        if (oldChunk != null) {
-            for (ContainerEntry cur : oldChunk) {
-                if (!cur.key().equals(e.key())) {
-                    nextChunk.add(cur);
-                }
-            }
-        }
-        nextChunk.add(e);
-        dimChunks.put(chunkKey, List.copyOf(nextChunk));
-
-        Map<Long, List<ContainerEntry>> dimCols = BY_COLUMN.computeIfAbsent(e.dimension(), k -> new ConcurrentHashMap<>());
-        long colKey = packCoords(e.x(), e.z());
-        List<ContainerEntry> oldCol = dimCols.get(colKey);
-        List<ContainerEntry> nextCol = new ArrayList<>(oldCol == null ? 1 : oldCol.size() + 1);
-        if (oldCol != null) {
-            for (ContainerEntry cur : oldCol) {
-                if (!cur.key().equals(e.key())) {
-                    nextCol.add(cur);
-                }
-            }
-        }
-        nextCol.add(e);
-        nextCol.sort(BY_Y_DESC);
-        dimCols.put(colKey, List.copyOf(nextCol));
     }
 
     private static ContainerEntry buildEntry(ClientLevel level, BlockEntity be, boolean opened) {
@@ -490,12 +457,16 @@ public final class ContainerDatabase {
     }
 
     public static int colorFor(ContainerEntry entry) {
-        int base = switch (entry.category()) {
-            case CAT_SHULKERS -> 0xFFC864FF;
-            case CAT_FURNACES -> 0xFFB8C0CC;
-            case CAT_OTHER -> 0xFF55CCFF;
-            default -> 0xFFFFB830;
-        };
+        int base;
+        if (CAT_SHULKERS.equals(entry.category())) {
+            base = MapPinFilter.shulkerColorRgb(entry.blockId());
+        } else {
+            base = switch (entry.category()) {
+                case CAT_FURNACES -> 0xFFB8C0CC;
+                case CAT_OTHER -> 0xFF55CCFF;
+                default -> 0xFFFFB830;
+            };
+        }
         if (!entry.opened()) {
             int r = ((base >> 16) & 0xFF) * 6 / 10;
             int g = ((base >> 8) & 0xFF) * 6 / 10;
@@ -521,80 +492,134 @@ public final class ContainerDatabase {
                 rebuildIndexesLocked();
                 REVISION.incrementAndGet();
                 dirty = true;
+                scheduleSaveLocked();
             }
         }
-        if (removed > 0) {
-            flushNow();
-        }
         return removed;
+    }
+
+    private static void indexSingleLocked(ContainerEntry entry) {
+        String dim = entry.dimension();
+        long chunkKey = packCoords(entry.chunkX(), entry.chunkZ());
+        Map<Long, List<ContainerEntry>> dimChunks = BY_CHUNK.computeIfAbsent(dim, k -> new ConcurrentHashMap<>());
+        List<ContainerEntry> prevChunk = dimChunks.get(chunkKey);
+        List<ContainerEntry> nextChunk = new ArrayList<>(prevChunk == null ? 1 : prevChunk.size() + 1);
+        if (prevChunk != null) {
+            for (ContainerEntry e : prevChunk) {
+                if (!e.key().equals(entry.key())) {
+                    nextChunk.add(e);
+                }
+            }
+        }
+        nextChunk.add(entry);
+        dimChunks.put(chunkKey, List.copyOf(nextChunk));
+
+        long colKey = packCoords(entry.x(), entry.z());
+        Map<Long, List<ContainerEntry>> dimCols = BY_COLUMN.computeIfAbsent(dim, k -> new ConcurrentHashMap<>());
+        List<ContainerEntry> prevCol = dimCols.get(colKey);
+        List<ContainerEntry> nextCol = new ArrayList<>(prevCol == null ? 1 : prevCol.size() + 1);
+        if (prevCol != null) {
+            for (ContainerEntry e : prevCol) {
+                if (!e.key().equals(entry.key())) {
+                    nextCol.add(e);
+                }
+            }
+        }
+        nextCol.add(entry);
+        nextCol.sort(BY_Y_DESC);
+        dimCols.put(colKey, List.copyOf(nextCol));
     }
 
     private static void rebuildIndexesLocked() {
         BY_CHUNK.clear();
         BY_COLUMN.clear();
-        Map<String, Map<Long, List<ContainerEntry>>> tmpChunks = new ConcurrentHashMap<>();
-        Map<String, Map<Long, List<ContainerEntry>>> tmpCols = new ConcurrentHashMap<>();
+        Map<String, Map<Long, List<ContainerEntry>>> chunks = new HashMap<>();
+        Map<String, Map<Long, List<ContainerEntry>>> columns = new HashMap<>();
 
         for (ContainerEntry e : ENTRIES.values()) {
-            tmpChunks.computeIfAbsent(e.dimension(), k -> new ConcurrentHashMap<>())
+            chunks.computeIfAbsent(e.dimension(), k -> new HashMap<>())
                     .computeIfAbsent(packCoords(e.chunkX(), e.chunkZ()), k -> new ArrayList<>())
                     .add(e);
-            tmpCols.computeIfAbsent(e.dimension(), k -> new ConcurrentHashMap<>())
+            columns.computeIfAbsent(e.dimension(), k -> new HashMap<>())
                     .computeIfAbsent(packCoords(e.x(), e.z()), k -> new ArrayList<>())
                     .add(e);
         }
 
-        for (var dimEntry : tmpChunks.entrySet()) {
-            Map<Long, List<ContainerEntry>> map = new ConcurrentHashMap<>();
-            for (var e : dimEntry.getValue().entrySet()) {
-                map.put(e.getKey(), List.copyOf(e.getValue()));
+        for (var dimEntry : chunks.entrySet()) {
+            Map<Long, List<ContainerEntry>> target = new ConcurrentHashMap<>();
+            for (var cEntry : dimEntry.getValue().entrySet()) {
+                target.put(cEntry.getKey(), List.copyOf(cEntry.getValue()));
             }
-            BY_CHUNK.put(dimEntry.getKey(), map);
+            BY_CHUNK.put(dimEntry.getKey(), target);
         }
-        for (var dimEntry : tmpCols.entrySet()) {
-            Map<Long, List<ContainerEntry>> map = new ConcurrentHashMap<>();
-            for (var e : dimEntry.getValue().entrySet()) {
-                e.getValue().sort(BY_Y_DESC);
-                map.put(e.getKey(), List.copyOf(e.getValue()));
+
+        for (var dimEntry : columns.entrySet()) {
+            Map<Long, List<ContainerEntry>> target = new ConcurrentHashMap<>();
+            for (var cEntry : dimEntry.getValue().entrySet()) {
+                List<ContainerEntry> list = cEntry.getValue();
+                list.sort(BY_Y_DESC);
+                target.put(cEntry.getKey(), List.copyOf(list));
             }
-            BY_COLUMN.put(dimEntry.getKey(), map);
+            BY_COLUMN.put(dimEntry.getKey(), target);
         }
     }
 
-    private static void writeFile(Path file, List<ContainerEntry> entries) {
-        synchronized (WRITE_LOCK) {
-            try {
-                Files.createDirectories(file.getParent());
-                CompoundTag root = new CompoundTag();
-                for (ContainerEntry e : entries) {
-                    CompoundTag tag = new CompoundTag();
-                    tag.putString("type", e.blockId());
-                    tag.put("data", e.blockEntityTag());
-                    if (e.customName() != null && !e.customName().isEmpty()) {
-                        tag.putString("customName", e.customName());
-                    }
-                    tag.putInt("slotCount", e.slotCount());
-                    tag.putInt("filledSlots", e.filledSlots());
-                    tag.putLong("updatedAt", e.updatedAt());
-                    tag.putBoolean("opened", e.opened());
-                    if (e.chestType() != null && !e.chestType().isEmpty()) {
-                        tag.putString("chestType", e.chestType());
-                    }
-                    if (e.connectedPos() != null) {
-                        tag.putInt("connX", e.connectedPos().getX());
-                        tag.putInt("connY", e.connectedPos().getY());
-                        tag.putInt("connZ", e.connectedPos().getZ());
-                    }
-                    root.put(e.key(), tag);
-                }
-                ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-                NbtIo.write(root, new DataOutputStream(bytes));
-                Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
-                Files.write(tmp, bytes.toByteArray());
-                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
-            } catch (Exception e) {
-                System.err.println("[ChunkVault] Failed to write chunkvault_containers.dat: " + e);
+    private static void scheduleSaveLocked() {
+        if (activeProjectDir == null) {
+            return;
+        }
+        if (SAVE_SCHEDULED.compareAndSet(false, true)) {
+            IO.schedule(ContainerDatabase::runScheduledSave, 1500L, TimeUnit.MILLISECONDS);
+        }
+    }
+
+    private static void runScheduledSave() {
+        Path targetDir;
+        List<ContainerEntry> snapshot;
+        synchronized (INDEX_LOCK) {
+            SAVE_SCHEDULED.set(false);
+            if (!dirty || activeProjectDir == null) {
+                return;
             }
+            dirty = false;
+            targetDir = activeProjectDir;
+            snapshot = new ArrayList<>(ENTRIES.values());
+        }
+        writeFile(targetDir.resolve("chunkvault_containers.dat"), snapshot);
+    }
+
+    private static void writeFile(Path file, List<ContainerEntry> entries) {
+        try {
+            Files.createDirectories(file.getParent());
+            CompoundTag root = new CompoundTag();
+            for (ContainerEntry e : entries) {
+                CompoundTag tag = new CompoundTag();
+                tag.putString("type", e.blockId());
+                tag.put("data", e.blockEntityTag());
+                if (e.customName() != null && !e.customName().isEmpty()) {
+                    tag.putString("customName", e.customName());
+                }
+                tag.putInt("slotCount", e.slotCount());
+                tag.putInt("filledSlots", e.filledSlots());
+                tag.putLong("updatedAt", e.updatedAt());
+                tag.putBoolean("opened", e.opened());
+                if (e.chestType() != null && !e.chestType().isEmpty()) {
+                    tag.putString("chestType", e.chestType());
+                }
+                if (e.connectedPos() != null) {
+                    tag.putInt("connX", e.connectedPos().getX());
+                    tag.putInt("connY", e.connectedPos().getY());
+                    tag.putInt("connZ", e.connectedPos().getZ());
+                }
+                root.put(e.key(), tag);
+            }
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            NbtIo.write(root, new DataOutputStream(bytes));
+            Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
+            Files.write(tmp, bytes.toByteArray());
+            Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
+        } catch (Exception e) {
+            System.err.println("[ChunkVault] Failed to write chunkvault_containers.dat: " + e);
         }
     }
 
