@@ -1,6 +1,7 @@
 package com.chunkvault.gui;
 
 import com.chunkvault.Lang;
+import com.chunkvault.state.AreaEtaTracker;
 import com.chunkvault.state.AreaPlan;
 import com.chunkvault.state.RecordingState;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
@@ -49,12 +50,13 @@ public final class AreaHudOverlay {
         String statsLine = Lang.s("hud.area_stats", prog.recorded(), prog.total(), pctText, prog.remaining());
 
         String curDim = mc.level.dimension().identifier().toString();
+        boolean sameDim = curDim.equals(AreaPlan.dimension());
         String navLine;
         int navColor;
         if (done) {
             navLine = Lang.s("hud.area_all_saved");
             navColor = 0xFF70FF90;
-        } else if (!curDim.equals(AreaPlan.dimension())) {
+        } else if (!sameDim) {
             navLine = Lang.s("hud.area_wrong_dim", shortDim(AreaPlan.dimension()));
             navColor = 0xFFFFD070;
         } else if (prog.hasMissing()) {
@@ -71,9 +73,26 @@ public final class AreaHudOverlay {
             navColor = 0xFF9AA0B0;
         }
 
+        String etaLine = "";
+        int etaColor = 0xFF8C94A6;
+        if (!done && sameDim) {
+            long etaSec = AreaEtaTracker.estimateEtaSeconds(prog);
+            String etaText = AreaEtaTracker.formatEta(etaSec);
+            String speedText = String.format(Locale.ROOT, "%.1f", AreaEtaTracker.smoothedSpeed());
+            etaLine = Lang.s("hud.area_eta", etaText, speedText);
+            etaColor = etaSec >= 0L ? 0xFFB8C4D8 : 0xFF8C94A6;
+        }
+
         int titleRowW = font.width(title) + (recBadge.isEmpty() ? 0 : font.width(recBadge) + 12);
-        int cardW = Math.max(176, Math.max(titleRowW, Math.max(font.width(statsLine), font.width(navLine))) + 16);
-        int cardH = navLine.isEmpty() ? 42 : 54;
+        int textMaxW = Math.max(titleRowW, Math.max(font.width(statsLine), Math.max(font.width(navLine), font.width(etaLine))));
+        int cardW = Math.max(176, textMaxW + 16);
+        int cardH = 42;
+        if (!navLine.isEmpty()) {
+            cardH += 12;
+        }
+        if (!etaLine.isEmpty()) {
+            cardH += 12;
+        }
 
         int screenW = mc.getWindow().getGuiScaledWidth();
         int x0 = Math.max(8, screenW - cardW - 8);
@@ -100,8 +119,13 @@ public final class AreaHudOverlay {
         }
 
         g.text(font, statsLine, x0 + 8, y0 + 27, 0xFFCCCCCC, true);
+        int nextY = y0 + 40;
         if (!navLine.isEmpty()) {
-            g.text(font, navLine, x0 + 8, y0 + 40, navColor, true);
+            g.text(font, navLine, x0 + 8, nextY, navColor, true);
+            nextY += 12;
+        }
+        if (!etaLine.isEmpty()) {
+            g.text(font, etaLine, x0 + 8, nextY, etaColor, true);
         }
     }
 
