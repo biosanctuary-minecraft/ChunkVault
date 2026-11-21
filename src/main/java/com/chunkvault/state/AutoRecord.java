@@ -12,6 +12,7 @@ import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.Locale;
 import java.util.Properties;
 
@@ -81,9 +82,11 @@ public final class AutoRecord {
         try {
             Path f = file();
             Files.createDirectories(f.getParent());
-            try (OutputStream out = Files.newOutputStream(f)) {
+            Path tmp = f.resolveSibling(f.getFileName() + ".tmp");
+            try (OutputStream out = Files.newOutputStream(tmp)) {
                 PROPS.store(new OutputStreamWriter(out, StandardCharsets.UTF_8), "ChunkVault per-server auto-record");
             }
+            Files.move(tmp, f, StandardCopyOption.REPLACE_EXISTING);
         } catch (Exception e) {
             System.err.println("[ChunkVault] Failed to write server settings: " + e);
         }
