@@ -42,6 +42,7 @@ public class ContainerDatabaseScreen extends Screen {
             "all",
             ContainerDatabase.CAT_CHESTS,
             ContainerDatabase.CAT_SHULKERS,
+            ContainerDatabase.CAT_ENDER,
             ContainerDatabase.CAT_FURNACES,
             ContainerDatabase.CAT_OTHER
     };
