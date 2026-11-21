@@ -2,6 +2,7 @@ package com.chunkvault.mixin;
 
 import com.chunkvault.Lang;
 import com.chunkvault.save.WorldSaveManager;
+import com.chunkvault.state.AreaPlan;
 import com.chunkvault.state.ChunkVaultSettings;
 import com.chunkvault.state.LastInteraction;
 import com.chunkvault.state.RecordingState;
@@ -110,14 +111,23 @@ public abstract class ContainerCaptureMixin {
         }
         int half = primaryContainer.getContainerSize();
         BlockState state = level.getBlockState(pos);
+        String dim = level.dimension().identifier().toString();
 
         if (sourceSize <= half || !(state.getBlock() instanceof ChestBlock)) {
+            if (!AreaPlan.allowsBlock(dim, pos.getX(), pos.getZ())) {
+                return;
+            }
             copyItems(source, 0, primaryContainer, 0, Math.min(sourceSize, half));
             manager.rememberContainer(level, primary);
         } else {
             BlockPos otherPos = findOtherHalf(level, state, pos);
             BlockEntity other = otherPos == null ? null : level.getBlockEntity(otherPos);
             if (other instanceof Container otherContainer) {
+                boolean allowPrimary = AreaPlan.allowsBlock(dim, pos.getX(), pos.getZ());
+                boolean allowOther = AreaPlan.allowsBlock(dim, otherPos.getX(), otherPos.getZ());
+                if (!allowPrimary && !allowOther) {
+                    return;
+                }
                 boolean primaryIsFirst = state.getValue(ChestBlock.TYPE) == ChestType.RIGHT;
                 BlockEntity firstBe = primaryIsFirst ? primary : other;
                 BlockEntity secondBe = primaryIsFirst ? other : primary;
@@ -129,6 +139,9 @@ public abstract class ContainerCaptureMixin {
                 manager.rememberContainer(level, secondBe);
                 resaveChunkContaining(level, manager, otherPos);
             } else {
+                if (!AreaPlan.allowsBlock(dim, pos.getX(), pos.getZ())) {
+                    return;
+                }
                 copyItems(source, 0, primaryContainer, 0, half);
                 manager.rememberContainer(level, primary);
             }
