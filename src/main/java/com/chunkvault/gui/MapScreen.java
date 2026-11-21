@@ -127,9 +127,10 @@ public class MapScreen extends Screen {
     private int[] zoneX1 = new int[256];
     private int[] zoneZ = new int[256];
     private int zoneCount;
+    private boolean[] zoneGrid = new boolean[0];
     private int zoneCx;
     private int zoneCz;
-    private int zoneR;
+    private int zoneScanR;
 
     public MapScreen() {
         super(Lang.c("map.title"));
@@ -254,6 +255,7 @@ public class MapScreen extends Screen {
         boolean recording = RecordingState.get().isActive() && manager != null;
         if (!recording) {
             zoneCount = 0;
+            zoneScanR = 0;
         } else if (frame % 3 == 0) {
             updateZone(mc, level, player);
         }
@@ -371,16 +373,39 @@ public class MapScreen extends Screen {
                 int x1 = (int) Math.round((mapCX + (zoneX1[i] * 16.0 - centerX) * scale) * dev);
                 int y0 = (int) Math.round((mapCY + (zoneZ[i] * 16.0 - centerZ) * scale) * dev);
                 int y1 = (int) Math.round((mapCY + ((zoneZ[i] + 1) * 16.0 - centerZ) * scale) * dev);
-                fillI(g, x0, y0, x1, y1, 0x2EFF1A1A);
+                fillI(g, x0, y0, x1, y1, 0x46FF1A1A);
             }
-            int fx0 = (int) Math.round((mapCX + ((zoneCx - zoneR) * 16.0 - centerX) * scale) * dev);
-            int fx1 = (int) Math.round((mapCX + ((zoneCx + zoneR + 1) * 16.0 - centerX) * scale) * dev);
-            int fy0 = (int) Math.round((mapCY + ((zoneCz - zoneR) * 16.0 - centerZ) * scale) * dev);
-            int fy1 = (int) Math.round((mapCY + ((zoneCz + zoneR + 1) * 16.0 - centerZ) * scale) * dev);
-            fillI(g, fx0, fy0, fx1, fy0 + 1, 0xCCFF4040);
-            fillI(g, fx0, fy1 - 1, fx1, fy1, 0xCCFF4040);
-            fillI(g, fx0, fy0, fx0 + 1, fy1, 0xCCFF4040);
-            fillI(g, fx1 - 1, fy0, fx1, fy1, 0xCCFF4040);
+            if (zoneScanR > 0) {
+                int side = zoneScanR * 2 + 1;
+                int t = Math.max(2, (int) Math.round(dev));
+                int edgeCol = 0xEEFF4040;
+                for (int gz = 0; gz < side; gz++) {
+                    int cz = zoneCz - zoneScanR + gz;
+                    int rowOff = gz * side;
+                    int y0 = (int) Math.round((mapCY + (cz * 16.0 - centerZ) * scale) * dev);
+                    int y1 = (int) Math.round((mapCY + ((cz + 1) * 16.0 - centerZ) * scale) * dev);
+                    for (int gx = 0; gx < side; gx++) {
+                        if (!zoneGrid[rowOff + gx]) {
+                            continue;
+                        }
+                        int cx = zoneCx - zoneScanR + gx;
+                        int x0 = (int) Math.round((mapCX + (cx * 16.0 - centerX) * scale) * dev);
+                        int x1 = (int) Math.round((mapCX + ((cx + 1) * 16.0 - centerX) * scale) * dev);
+                        if (gz == 0 || !zoneGrid[(gz - 1) * side + gx]) {
+                            fillI(g, x0, y0, x1, y0 + t, edgeCol);
+                        }
+                        if (gz == side - 1 || !zoneGrid[(gz + 1) * side + gx]) {
+                            fillI(g, x0, y1 - t, x1, y1, edgeCol);
+                        }
+                        if (gx == 0 || !zoneGrid[rowOff + gx - 1]) {
+                            fillI(g, x0, y0, x0 + t, y1, edgeCol);
+                        }
+                        if (gx == side - 1 || !zoneGrid[rowOff + gx + 1]) {
+                            fillI(g, x1 - t, y0, x1, y1, edgeCol);
+                        }
+                    }
+                }
+            }
         }
 
         if (ppc >= 48) {
@@ -998,17 +1023,33 @@ public class MapScreen extends Screen {
     }
 
     private void updateZone(Minecraft mc, ClientLevel level, LocalPlayer player) {
-        int r = mc.options.renderDistance().get();
+        int effR = Math.max(1, mc.options.getEffectiveRenderDistance());
+        int scanR = effR + 1;
+        int side = scanR * 2 + 1;
         int pcx = (int) Math.floor(player.getX() / 16.0);
         int pcz = (int) Math.floor(player.getZ() / 16.0);
-        zoneR = r;
+        zoneScanR = scanR;
         zoneCx = pcx;
         zoneCz = pcz;
         zoneCount = 0;
-        for (int cz = pcz - r; cz <= pcz + r; cz++) {
+
+        if (zoneGrid.length != side * side) {
+            zoneGrid = new boolean[side * side];
+        } else {
+            Arrays.fill(zoneGrid, false);
+        }
+
+        int maxDistSq = scanR * scanR;
+        for (int dz = -scanR; dz <= scanR; dz++) {
+            int cz = pcz + dz;
+            int rowOff = (dz + scanR) * side;
             int runStart = Integer.MIN_VALUE;
-            for (int cx = pcx - r; cx <= pcx + r + 1; cx++) {
-                boolean loaded = cx <= pcx + r && isLoaded(level, cx, cz);
+            for (int dx = -scanR; dx <= scanR + 1; dx++) {
+                int cx = pcx + dx;
+                boolean loaded = dx <= scanR && (dx * dx + dz * dz) <= maxDistSq && isLoaded(level, cx, cz);
+                if (loaded) {
+                    zoneGrid[rowOff + dx + scanR] = true;
+                }
                 if (loaded && runStart == Integer.MIN_VALUE) {
                     runStart = cx;
                 } else if (!loaded && runStart != Integer.MIN_VALUE) {
