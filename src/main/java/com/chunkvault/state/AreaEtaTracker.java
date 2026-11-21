@@ -5,6 +5,10 @@ import net.minecraft.client.Minecraft;
 
 public final class AreaEtaTracker {
 
+    private static final long SEC_PER_DAY = 86_400L;
+    private static final long SEC_PER_YEAR = 365L * SEC_PER_DAY;
+    private static final long MAX_YEARS_SEC = 1000L * SEC_PER_YEAR;
+
     private static boolean hasPrev;
     private static double prevX;
     private static double prevZ;
@@ -91,7 +95,7 @@ public final class AreaEtaTracker {
             return -1L;
         }
         double secs = prog.remaining() / chunksPerSec;
-        if (!Double.isFinite(secs)) {
+        if (!Double.isFinite(secs) || secs >= Long.MAX_VALUE) {
             return Long.MAX_VALUE;
         }
         return Math.max(1L, Math.round(secs));
@@ -101,9 +105,6 @@ public final class AreaEtaTracker {
         if (etaSeconds < 0L) {
             return "—";
         }
-        if (etaSeconds >= 360_000L) {
-            return Lang.s("hud.eta_over_99h");
-        }
         if (etaSeconds < 60L) {
             return Lang.s("hud.eta_s", etaSeconds);
         }
@@ -112,8 +113,21 @@ public final class AreaEtaTracker {
             long s = etaSeconds % 60L;
             return Lang.s("hud.eta_ms", m, s);
         }
-        long h = etaSeconds / 3600L;
-        long m = (etaSeconds % 3600L) / 60L;
-        return Lang.s("hud.eta_hm", h, m);
+        if (etaSeconds < SEC_PER_DAY) {
+            long h = etaSeconds / 3600L;
+            long m = (etaSeconds % 3600L) / 60L;
+            return Lang.s("hud.eta_hm", h, m);
+        }
+        if (etaSeconds < SEC_PER_YEAR) {
+            long d = etaSeconds / SEC_PER_DAY;
+            long h = (etaSeconds % SEC_PER_DAY) / 3600L;
+            return Lang.s("hud.eta_dh", d, h);
+        }
+        if (etaSeconds < MAX_YEARS_SEC) {
+            long y = etaSeconds / SEC_PER_YEAR;
+            long d = (etaSeconds % SEC_PER_YEAR) / SEC_PER_DAY;
+            return Lang.s("hud.eta_yd", y, d);
+        }
+        return Lang.s("hud.eta_over_999y");
     }
 }
