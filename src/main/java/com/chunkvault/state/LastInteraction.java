@@ -4,7 +4,7 @@ import net.minecraft.core.BlockPos;
 
 public final class LastInteraction {
 
-    private static final long MAX_AGE_MS = 3000L;
+    private static final long MAX_AGE_MS = 1000L;
 
     private static volatile BlockPos lastRightClickedBlock;
     private static volatile long lastRightClickTimeMs;
