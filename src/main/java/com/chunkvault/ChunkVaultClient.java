@@ -216,7 +216,7 @@ public class ChunkVaultClient implements ClientModInitializer {
             while (openChestsKey.consumeClick()) {
                 if (client.player != null) {
                     if (ProjectMap.isOpen()) {
-                        client.setScreenAndShow(new ContainerDatabaseScreen(new MapScreen()));
+                        client.setScreenAndShow(new ContainerDatabaseScreen(null));
                     } else {
                         client.player.sendSystemMessage(Component.literal("§c[ChunkVault] " + Lang.s("db.no_project")));
                     }
@@ -224,7 +224,7 @@ public class ChunkVaultClient implements ClientModInitializer {
             }
             while (openProjectsKey.consumeClick()) {
                 if (client.player != null) {
-                    client.setScreenAndShow(new ExplorerScreen(new MapScreen()));
+                    client.setScreenAndShow(new ExplorerScreen(null));
                 }
             }
             while (areaCoordsKey.consumeClick()) {
@@ -259,11 +259,10 @@ public class ChunkVaultClient implements ClientModInitializer {
             }
             if (openChestsNextTick) {
                 openChestsNextTick = false;
-                MapScreen mapScreen = new MapScreen();
                 if (ProjectMap.isOpen()) {
-                    Minecraft.getInstance().setScreenAndShow(new ContainerDatabaseScreen(mapScreen));
+                    Minecraft.getInstance().setScreenAndShow(new ContainerDatabaseScreen(null));
                 } else {
-                    Minecraft.getInstance().setScreenAndShow(mapScreen);
+                    Minecraft.getInstance().setScreenAndShow(new MapScreen());
                 }
             }
             if (openAreaInputNextTick) {
