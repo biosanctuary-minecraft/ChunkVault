@@ -6,7 +6,9 @@
   "client": [
     "ChunkCaptureMixin",
     "BlockInteractionMixin",
-    "ContainerCaptureMixin"
+    "ContainerCaptureMixin",
+    "ScreenGuardMixin",
+    "InputBlockMixin"
   ],
   "injectors": {
     "defaultRequire": 1
