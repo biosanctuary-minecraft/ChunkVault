@@ -416,14 +416,22 @@ public final class AreaPlan {
                 nearestCx = startCx;
                 nearestCz = startCz;
             } else {
+                long baseDx = Math.abs((long) startCx - playerCx);
+                long baseDz = Math.abs((long) startCz - playerCz);
                 long bestDistSq = Long.MAX_VALUE;
                 int maxRing = Math.max(
                         Math.max(startCx - x0, x1 - startCx),
                         Math.max(startCz - z0, z1 - startCz)
                 );
                 for (int r = 1; r <= maxRing; r++) {
-                    if (hasMissing && (long) r * (long) r >= bestDistSq) {
-                        break;
+                    if (hasMissing) {
+                        long minRingDistSq = Math.min(
+                                (baseDx + r) * (baseDx + r) + baseDz * baseDz,
+                                baseDx * baseDx + (baseDz + r) * (baseDz + r)
+                        );
+                        if (minRingDistSq >= bestDistSq) {
+                            break;
+                        }
                     }
                     int rx0 = Math.max(x0, startCx - r);
                     int rx1 = Math.min(x1, startCx + r);
