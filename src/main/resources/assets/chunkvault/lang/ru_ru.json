@@ -288,5 +288,7 @@
   "chunkvault.explorer.deleting": "Удаление…",
   "chunkvault.explorer.deleted": "Проект удалён: %s",
   "chunkvault.explorer.delete_error": "Ошибка удаления: %s",
-  "chunkvault.explorer.active_tag": "ОТКРЫТ"
+  "chunkvault.explorer.active_tag": "ОТКРЫТ",
+  "chunkvault.settings.row.ender_chest": "Сохранять эндер-сундук",
+  "chunkvault.settings.row.ender_chest.desc": "Сохранять содержимое открытого эндер-сундука в синглмир"
 }
