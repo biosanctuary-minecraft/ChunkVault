@@ -1687,7 +1687,7 @@ public class MapScreen extends Screen {
                 zoomCenter(1.25);
                 return true;
             }
-            if (key == InputConstants.KEY_MINUS || key == InputConstants.KEY_SUBTRACT) {
+            if (key == InputConstants.KEY_MINUS || key == 333) {
                 zoomCenter(0.8);
                 return true;
             }
