@@ -167,13 +167,15 @@ public class ContainerDatabaseScreen extends Screen {
             }
         }
 
+        Comparator<ResultRow> byOpenedAndNewest = Comparator
+                .comparing((ResultRow r) -> r.item().entry().opened(), Comparator.reverseOrder())
+                .thenComparing(Comparator.comparingLong((ResultRow r) -> r.item().entry().updatedAt()).reversed());
+
         if (!q.isEmpty()) {
             rows.sort(Comparator.comparingInt(ResultRow::matchedCount).reversed()
-                    .thenComparing((ResultRow r) -> r.item().entry().opened(), Comparator.reverseOrder())
-                    .thenComparingLong((ResultRow r) -> r.item().entry().updatedAt()).reversed());
+                    .thenComparing(byOpenedAndNewest));
         } else {
-            rows.sort(Comparator.comparing((ResultRow r) -> r.item().entry().opened(), Comparator.reverseOrder())
-                    .thenComparingLong((ResultRow r) -> r.item().entry().updatedAt()).reversed());
+            rows.sort(byOpenedAndNewest);
         }
 
         if (selected >= rows.size()) {
