@@ -18,7 +18,7 @@ final class MapTextures {
     private static final int BUILD_PER_FRAME = 8;
     private static final int UPLOAD_PER_FRAME = 12;
     private static final int DIRTY_CHUNKS_PER_FRAME = 96;
-    private static final int EVICT_AFTER_FRAMES = 600;
+    private static final long EVICT_AFTER_MS = 15000L;
 
     static final class Lod {
         DynamicTexture tex;
@@ -41,6 +41,7 @@ final class MapTextures {
     private static int session = -1;
     private static int buildLeft;
     private static int uploadLeft;
+    private static long lastEvictMs;
 
     private MapTextures() {}
 
@@ -98,8 +99,10 @@ final class MapTextures {
             dirty.clear();
         }
 
-        if (frame % 120 == 0) {
-            evict(frame);
+        long nowMs = System.currentTimeMillis();
+        if (nowMs - lastEvictMs >= 2000L) {
+            lastEvictMs = nowMs;
+            evict(nowMs);
         }
     }
 
@@ -111,7 +114,7 @@ final class MapTextures {
         try {
             Map<Long, Region> regions = REGIONS.computeIfAbsent(dimension, k -> new HashMap<>());
             Region r = regions.computeIfAbsent(MapCache.key(rx, rz), k -> new Region());
-            r.lastUsed = frame;
+            r.lastUsed = System.currentTimeMillis();
 
             Lod lod = r.lods[lodIdx];
             if (lod == null) {
@@ -199,12 +202,12 @@ final class MapTextures {
         }
     }
 
-    private static void evict(long frame) {
+    private static void evict(long nowMs) {
         for (Map<Long, Region> regions : REGIONS.values()) {
             Iterator<Region> it = regions.values().iterator();
             while (it.hasNext()) {
                 Region r = it.next();
-                if (frame - r.lastUsed > EVICT_AFTER_FRAMES) {
+                if (nowMs - r.lastUsed > EVICT_AFTER_MS) {
                     for (Lod lod : r.lods) {
                         closeLod(lod);
                     }
