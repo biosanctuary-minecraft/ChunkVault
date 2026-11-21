@@ -12,8 +12,8 @@ import java.util.Set;
 
 final class MapTextures {
 
-    static final int[] SIZE = {256, 64};
-    private static final int[] PX_PER_CHUNK = {16, 4};
+    static final int[] SIZE = {256, 128, 64};
+    private static final int[] PX_PER_CHUNK = {16, 8, 4};
 
     private static final int BUILD_PER_FRAME = 8;
     private static final int UPLOAD_PER_FRAME = 12;
@@ -29,7 +29,7 @@ final class MapTextures {
     }
 
     private static final class Region {
-        final Lod[] lods = new Lod[2];
+        final Lod[] lods = new Lod[3];
         long lastUsed;
     }
 
@@ -81,7 +81,7 @@ final class MapTextures {
                 }
                 MapCache.ChunkColors c = cache.get(key);
                 try {
-                    for (int i = 0; i < 2; i++) {
+                    for (int i = 0; i < 3; i++) {
                         Lod lod = r.lods[i];
                         if (lod != null) {
                             writeChunk(lod, i, cx & 15, cz & 15, c);
@@ -171,7 +171,7 @@ final class MapTextures {
 
     private static void writeChunk(Lod lod, int lodIdx, int lx, int lz, MapCache.ChunkColors c) {
         int n = PX_PER_CHUNK[lodIdx];
-        int[] src = c == null ? null : (lodIdx == 0 ? c.px : c.l4);
+        int[] src = c == null ? null : (lodIdx == 0 ? c.px : lodIdx == 1 ? c.l8 : c.l4);
         NativeImage img = lod.img;
         int baseX = lx * n;
         int baseY = lz * n;
