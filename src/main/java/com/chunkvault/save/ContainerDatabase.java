@@ -17,6 +17,7 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.ChiseledBookShelfBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.ChestType;
+import net.minecraft.world.level.chunk.LevelChunk;
 
 import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
@@ -268,6 +269,90 @@ public final class ContainerDatabase {
         }
     }
 
+    public static void syncChunkContainers(ClientLevel level, LevelChunk chunk) {
+        if (level == null || chunk == null) {
+            return;
+        }
+        String dimension = level.dimension().identifier().toString();
+        int chunkX = chunk.getPos().x();
+        int chunkZ = chunk.getPos().z();
+        long chunkKey = packCoords(chunkX, chunkZ);
+
+        Collection<BlockEntity> blockEntities = chunk.getBlockEntities().values();
+        Map<String, String> liveBlockIds = new HashMap<>();
+        List<ContainerEntry> toAdd = null;
+
+        for (BlockEntity be : blockEntities) {
+            if (be instanceof ChiseledBookShelfBlockEntity) {
+                continue;
+            }
+            if (!(be instanceof Container container) || container.getContainerSize() < 3) {
+                continue;
+            }
+            BlockPos pos = be.getBlockPos();
+            String key = keyOf(dimension, pos.getX(), pos.getY(), pos.getZ());
+            String liveId = blockIdOf(be);
+            liveBlockIds.put(key, liveId);
+
+            ContainerEntry existing = ENTRIES.get(key);
+            if (existing == null || !liveId.equals(existing.blockId())) {
+                try {
+                    ContainerEntry entry = buildEntry(level, be, false);
+                    if (entry != null) {
+                        if (toAdd == null) {
+                            toAdd = new ArrayList<>();
+                        }
+                        toAdd.add(entry);
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+
+        synchronized (INDEX_LOCK) {
+            boolean changed = false;
+
+            Map<Long, List<ContainerEntry>> dimChunks = BY_CHUNK.get(dimension);
+            List<ContainerEntry> existingInChunk = dimChunks == null ? null : dimChunks.get(chunkKey);
+            if (existingInChunk != null && !existingInChunk.isEmpty()) {
+                List<ContainerEntry> stale = null;
+                for (ContainerEntry e : existingInChunk) {
+                    String liveId = liveBlockIds.get(e.key());
+                    if (liveId == null || !liveId.equals(e.blockId())) {
+                        if (stale == null) {
+                            stale = new ArrayList<>();
+                        }
+                        stale.add(e);
+                    }
+                }
+                if (stale != null) {
+                    for (ContainerEntry e : stale) {
+                        ENTRIES.remove(e.key());
+                        removeSingleLocked(e);
+                        changed = true;
+                    }
+                }
+            }
+
+            if (toAdd != null) {
+                for (ContainerEntry e : toAdd) {
+                    ContainerEntry cur = ENTRIES.get(e.key());
+                    if (cur == null || !cur.blockId().equals(e.blockId())) {
+                        ENTRIES.put(e.key(), e);
+                        indexSingleLocked(e);
+                        changed = true;
+                    }
+                }
+            }
+
+            if (changed) {
+                REVISION.incrementAndGet();
+                dirty = true;
+                scheduleSaveLocked();
+            }
+        }
+    }
+
     public static void putUnopenedBatch(ClientLevel level, Collection<BlockEntity> blockEntities) {
         if (blockEntities == null || blockEntities.isEmpty()) {
             return;
@@ -496,6 +581,47 @@ public final class ContainerDatabase {
             }
         }
         return removed;
+    }
+
+    private static void removeSingleLocked(ContainerEntry entry) {
+        String dim = entry.dimension();
+        long chunkKey = packCoords(entry.chunkX(), entry.chunkZ());
+        Map<Long, List<ContainerEntry>> dimChunks = BY_CHUNK.get(dim);
+        if (dimChunks != null) {
+            List<ContainerEntry> prev = dimChunks.get(chunkKey);
+            if (prev != null) {
+                List<ContainerEntry> next = new ArrayList<>(prev.size());
+                for (ContainerEntry e : prev) {
+                    if (!e.key().equals(entry.key())) {
+                        next.add(e);
+                    }
+                }
+                if (next.isEmpty()) {
+                    dimChunks.remove(chunkKey);
+                } else {
+                    dimChunks.put(chunkKey, List.copyOf(next));
+                }
+            }
+        }
+
+        long colKey = packCoords(entry.x(), entry.z());
+        Map<Long, List<ContainerEntry>> dimCols = BY_COLUMN.get(dim);
+        if (dimCols != null) {
+            List<ContainerEntry> prev = dimCols.get(colKey);
+            if (prev != null) {
+                List<ContainerEntry> next = new ArrayList<>(prev.size());
+                for (ContainerEntry e : prev) {
+                    if (!e.key().equals(entry.key())) {
+                        next.add(e);
+                    }
+                }
+                if (next.isEmpty()) {
+                    dimCols.remove(colKey);
+                } else {
+                    dimCols.put(colKey, List.copyOf(next));
+                }
+            }
+        }
     }
 
     private static void indexSingleLocked(ContainerEntry entry) {
