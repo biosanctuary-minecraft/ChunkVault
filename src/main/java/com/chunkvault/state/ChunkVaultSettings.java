@@ -41,6 +41,7 @@ public final class ChunkVaultSettings {
     private volatile boolean saveEntities = true;
     private volatile boolean saveContainers = true;
     private volatile boolean savePlayerInventory = true;
+    private volatile boolean saveEnderChest = true;
     private volatile boolean preventMobSpawning = true;
     private volatile boolean useSeed = false;
     private volatile long seed = 0L;
@@ -83,6 +84,15 @@ public final class ChunkVaultSettings {
 
     public void setSavePlayerInventory(boolean value) {
         this.savePlayerInventory = value;
+        save();
+    }
+
+    public boolean saveEnderChest() {
+        return saveEnderChest;
+    }
+
+    public void setSaveEnderChest(boolean value) {
+        this.saveEnderChest = value;
         save();
     }
 
@@ -237,6 +247,7 @@ public final class ChunkVaultSettings {
             saveEntities = Boolean.parseBoolean(p.getProperty("saveEntities", "true"));
             saveContainers = Boolean.parseBoolean(p.getProperty("saveContainers", "true"));
             savePlayerInventory = Boolean.parseBoolean(p.getProperty("savePlayerInventory", "true"));
+            saveEnderChest = Boolean.parseBoolean(p.getProperty("saveEnderChest", "true"));
             preventMobSpawning = Boolean.parseBoolean(p.getProperty("preventMobSpawning", "true"));
             useSeed = Boolean.parseBoolean(p.getProperty("useSeed", "false"));
             seed = Long.parseLong(p.getProperty("seed", "0"));
@@ -278,6 +289,7 @@ public final class ChunkVaultSettings {
         p.setProperty("saveEntities", Boolean.toString(saveEntities));
         p.setProperty("saveContainers", Boolean.toString(saveContainers));
         p.setProperty("savePlayerInventory", Boolean.toString(savePlayerInventory));
+        p.setProperty("saveEnderChest", Boolean.toString(saveEnderChest));
         p.setProperty("preventMobSpawning", Boolean.toString(preventMobSpawning));
         p.setProperty("useSeed", Boolean.toString(useSeed));
         p.setProperty("seed", Long.toString(seed));
