@@ -5,6 +5,7 @@ import com.chunkvault.Lang;
 import com.chunkvault.save.ContainerDatabase;
 import com.chunkvault.state.AreaPlan;
 import com.chunkvault.state.AutoRecord;
+import com.chunkvault.state.ChunkVaultSettings;
 import com.chunkvault.state.MapPinFilter;
 import com.chunkvault.state.RecordingState;
 import com.mojang.blaze3d.platform.InputConstants;
@@ -1520,6 +1521,10 @@ public class MapScreen extends Screen {
         double originZ = rMinZ * 256.0;
         double offX = (mapCX + (originX - centerX) * scale) * dev;
         double offY = (mapCY + (originZ - centerZ) * scale) * dev;
+        if (scale == targetScale) {
+            offX = Math.round(offX);
+            offY = Math.round(offY);
+        }
 
         g.pose().pushMatrix();
         g.pose().translate((float) offX, (float) offY);
@@ -1738,6 +1743,12 @@ public class MapScreen extends Screen {
                 if (ChunkVaultClient.matchesToggleHud(event)) {
                     boolean on = AreaPlan.toggleHud();
                     showToast(Lang.s("area.btn_hud", on ? Lang.s("common.on") : Lang.s("common.off")));
+                    return true;
+                }
+                if (ChunkVaultClient.matchesToggleMinimap(event)) {
+                    boolean on = !ChunkVaultSettings.get().minimapEnabled();
+                    ChunkVaultSettings.get().setMinimapEnabled(on);
+                    showToast(Lang.s("minimap.toggle_msg", on ? Lang.s("common.on") : Lang.s("common.off")));
                     return true;
                 }
             }
