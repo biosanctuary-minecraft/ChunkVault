@@ -57,7 +57,7 @@ public final class MinimapOverlay {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer player = mc.player;
         ClientLevel level = mc.level;
-        if (player == null || level == null || mc.gui.hud.isHidden() || mc.screen != null) {
+        if (player == null || level == null || mc.gui.hud.isHidden()) {
             return;
         }
         ChunkVaultSettings settings = ChunkVaultSettings.get();
