@@ -228,19 +228,47 @@ public final class WorldSaveManager {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-        flushEntities();
-        for (SimpleRegionFile region : openRegions.values()) {
-            try {
-                region.close();
-            } catch (IOException e) {
-                System.err.println("[ChunkVault] Error closing region file: " + e);
+        finishOnIoThread(spawnPos, uuid, playerTag, null);
+    }
+
+    public synchronized void closeAndFinishAsync(BlockPos spawnPos, UUID uuid, CompoundTag playerTag, Runnable onDone) {
+        closed = true;
+        try {
+            ioExecutor.execute(() -> finishOnIoThread(spawnPos, uuid, playerTag, onDone));
+        } catch (RejectedExecutionException e) {
+            finishOnIoThread(spawnPos, uuid, playerTag, onDone);
+        }
+        ioExecutor.shutdown();
+    }
+
+    public void awaitTermination() {
+        try {
+            ioExecutor.awaitTermination(30, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private void finishOnIoThread(BlockPos spawnPos, UUID uuid, CompoundTag playerTag, Runnable onDone) {
+        try {
+            flushEntities();
+            for (SimpleRegionFile region : openRegions.values()) {
+                try {
+                    region.close();
+                } catch (IOException e) {
+                    System.err.println("[ChunkVault] Error closing region file: " + e);
+                }
+            }
+            openRegions.clear();
+            ContainerDatabase.flushNow();
+            if (playerTag != null && uuid != null) {
+                PlayerDataWriter.writeToWorld(rootDir, uuid, playerTag);
+            }
+            LevelDatWriter.write(rootDir, gameDir, levelName, spawnPos, uuid);
+        } finally {
+            if (onDone != null) {
+                onDone.run();
             }
         }
-        openRegions.clear();
-        ContainerDatabase.flushNow();
-        if (playerTag != null && uuid != null) {
-            PlayerDataWriter.writeToWorld(rootDir, uuid, playerTag);
-        }
-        LevelDatWriter.write(rootDir, gameDir, levelName, spawnPos, uuid);
     }
 }
