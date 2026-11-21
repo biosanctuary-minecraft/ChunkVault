@@ -270,5 +270,16 @@
   "chunkvault.minimap.layout.title": "ChunkVault — Minimap Layout",
   "chunkvault.minimap.layout.hint": "Drag minimap to move  •  Drag corner or use -/+ to resize  •  Scroll to zoom",
   "chunkvault.minimap.layout.size": "Size:",
-  "chunkvault.minimap.layout.zoom": "Zoom:"
+  "chunkvault.minimap.layout.zoom": "Zoom:",
+  "chunkvault.db.status.all": "Status: All",
+  "chunkvault.db.status.opened": "Status: Opened",
+  "chunkvault.db.status.unopened": "Status: Unopened",
+  "chunkvault.db.sort_prefix": "Sort: %s",
+  "chunkvault.db.sort.newest": "Newest",
+  "chunkvault.db.sort.oldest": "Oldest",
+  "chunkvault.db.sort.nearest": "Nearest",
+  "chunkvault.db.sort.farthest": "Farthest",
+  "chunkvault.db.sort.filled_desc": "Most Full",
+  "chunkvault.db.sort.filled_asc": "Least Full",
+  "chunkvault.db.sort.name": "Name A–Z"
 }
