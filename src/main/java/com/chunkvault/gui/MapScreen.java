@@ -5,6 +5,7 @@ import com.chunkvault.Lang;
 import com.chunkvault.save.ContainerDatabase;
 import com.chunkvault.state.AreaPlan;
 import com.chunkvault.state.AutoRecord;
+import com.chunkvault.state.MapPinFilter;
 import com.chunkvault.state.RecordingState;
 import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.Minecraft;
@@ -35,6 +36,8 @@ public class MapScreen extends Screen {
     private static final double MIN_SCALE = 0.125;
     private static final double MAX_SCALE = 16.0;
     private static final int RECT_BUDGET = 9000;
+    private static final int FILTER_PANEL_W = 230;
+    private static final int FILTER_PANEL_H = 190;
 
     private static double lastScale = 1.0;
     private static boolean showPins = true;
@@ -82,10 +85,37 @@ public class MapScreen extends Screen {
     private int pinBtnX1;
     private int pinBtnY1;
 
+    private int filterBtnX0;
+    private int filterBtnY0;
+    private int filterBtnX1;
+    private int filterBtnY1;
+
     private int dimBtnX0;
     private int dimBtnY0;
     private int dimBtnX1;
     private int dimBtnY1;
+
+    private boolean filterPanelOpen;
+    private EditBox filterSearchBox;
+    private int fpX0;
+    private int fpY0;
+    private int fpX1;
+    private int fpY1;
+    private int fpResetX0;
+    private int fpResetX1;
+    private int fpResetY0;
+    private int fpResetY1;
+    private int fpStatusY0;
+    private int fpStatusY1;
+    private int fpTypesY0;
+    private int fpShulkerAllX0;
+    private int fpShulkerAllX1;
+    private int fpShulkerNoneX0;
+    private int fpShulkerNoneX1;
+    private int fpShulkerBtnY0;
+    private int fpShulkerBtnY1;
+    private int fpSwatchesY0;
+    private MapPinFilter.ShulkerColor hoveredColor;
 
     private int areaBarY0;
     private int areaBarY1;
@@ -128,13 +158,34 @@ public class MapScreen extends Screen {
     private int[] zoneZ = new int[256];
     private int zoneCount;
     private boolean[] zoneGrid = new boolean[0];
-    private int zoneCx;
-    private int zoneCz;
-    private int zoneScanR;
+    private int zoneMinX;
+    private int zoneMinZ;
+    private int zoneSide;
 
     public MapScreen() {
         super(Lang.c("map.title"));
         recenterOnPlayer();
+    }
+
+    @Override
+    protected void init() {
+        super.init();
+        filterSearchBox = new EditBox(this.font, 0, 0, FILTER_PANEL_W - 16, 15, Lang.c("map.filter.search"));
+        filterSearchBox.setMaxLength(80);
+        filterSearchBox.setValue(MapPinFilter.searchQuery());
+        filterSearchBox.setHint(Lang.c("map.filter.search_hint"));
+        filterSearchBox.setResponder(MapPinFilter::setSearchQuery);
+        filterSearchBox.setVisible(filterPanelOpen && ProjectMap.isOpen());
+        this.addWidget(filterSearchBox);
+    }
+
+    private void unfocusFilterSearch() {
+        if (filterSearchBox != null) {
+            filterSearchBox.setFocused(false);
+        }
+        if (this.getFocused() == filterSearchBox) {
+            this.setFocused(null);
+        }
     }
 
     private static ItemStack chestButtonIcon() {
@@ -187,9 +238,40 @@ public class MapScreen extends Screen {
         return ((int) Math.floor(centerZ + (mouseY - mapCY) / scale)) >> 4;
     }
 
+    private void updateFilterPanelBounds(boolean hasProject, boolean showDimBtn) {
+        if (!hasProject || !filterPanelOpen) {
+            fpX0 = 0;
+            fpY0 = 0;
+            fpX1 = 0;
+            fpY1 = 0;
+            if (filterSearchBox != null) {
+                filterSearchBox.setVisible(false);
+            }
+            return;
+        }
+        int anchorTop = showDimBtn ? dimBtnY0 : pinBtnY0;
+        fpX1 = this.width - 8;
+        fpX0 = Math.max(8, fpX1 - FILTER_PANEL_W);
+        fpY1 = anchorTop - 6;
+        fpY0 = Math.max(TOP_BAR + 4, fpY1 - FILTER_PANEL_H);
+        if (fpY0 + FILTER_PANEL_H > this.height - BOTTOM_BAR - 4) {
+            fpY1 = this.height - BOTTOM_BAR - 4;
+            fpY0 = Math.max(TOP_BAR + 4, fpY1 - FILTER_PANEL_H);
+        }
+        if (filterSearchBox != null) {
+            filterSearchBox.setVisible(true);
+            filterSearchBox.setX(fpX0 + 8);
+            filterSearchBox.setY(fpY0 + 24);
+            filterSearchBox.setWidth((fpX1 - fpX0) - 16);
+            filterSearchBox.setHeight(15);
+            if (!filterSearchBox.isFocused() && !filterSearchBox.getValue().equals(MapPinFilter.searchQuery())) {
+                filterSearchBox.setValue(MapPinFilter.searchQuery());
+            }
+        }
+    }
+
     @Override
     public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
-        super.extractRenderState(g, mouseX, mouseY, partialTick);
         frame++;
 
         Minecraft mc = Minecraft.getInstance();
@@ -215,6 +297,10 @@ public class MapScreen extends Screen {
         String dimensionId = level.dimension().identifier().toString();
         var cache = ProjectMap.forDimension(dimensionId);
         boolean hasProject = ProjectMap.isOpen();
+        if (!hasProject && filterPanelOpen) {
+            filterPanelOpen = false;
+            unfocusFilterSearch();
+        }
         boolean showAreaBar = hasProject && (selectingArea || (areaPanelOpen && AreaPlan.isActive()));
         boolean showDimBtn = hasProject && areaPanelOpen && AreaPlan.isActive();
 
@@ -222,6 +308,11 @@ public class MapScreen extends Screen {
         pinBtnX0 = hasProject ? pinBtnX1 - 22 : 0;
         pinBtnY1 = hasProject ? this.height - BOTTOM_BAR - 8 : 0;
         pinBtnY0 = hasProject ? pinBtnY1 - 22 : 0;
+
+        filterBtnX1 = hasProject ? pinBtnX0 - 6 : 0;
+        filterBtnX0 = hasProject ? filterBtnX1 - 22 : 0;
+        filterBtnY0 = pinBtnY0;
+        filterBtnY1 = pinBtnY1;
 
         if (showDimBtn) {
             dimBtnX0 = pinBtnX0;
@@ -235,12 +326,19 @@ public class MapScreen extends Screen {
             dimBtnY1 = 0;
         }
 
+        updateFilterPanelBounds(hasProject, showDimBtn);
+
         boolean overPinBtn = hasProject && mouseX >= pinBtnX0 && mouseX < pinBtnX1
                 && mouseY >= pinBtnY0 && mouseY < pinBtnY1;
+        boolean overFilterBtn = hasProject && mouseX >= filterBtnX0 && mouseX < filterBtnX1
+                && mouseY >= filterBtnY0 && mouseY < filterBtnY1;
         boolean overDimBtn = showDimBtn && mouseX >= dimBtnX0 && mouseX < dimBtnX1
                 && mouseY >= dimBtnY0 && mouseY < dimBtnY1;
+        boolean overFilterPanel = hasProject && filterPanelOpen
+                && mouseX >= fpX0 && mouseX < fpX1 && mouseY >= fpY0 && mouseY < fpY1;
         boolean inAreaBar = showAreaBar && mouseY >= areaBarY0 && mouseY < areaBarY1;
-        boolean inMap = mouseY >= mapY0 && mouseY < mapY1 && !inAreaBar && !overPinBtn && !overDimBtn;
+        boolean inMap = mouseY >= mapY0 && mouseY < mapY1
+                && !inAreaBar && !overPinBtn && !overFilterBtn && !overDimBtn && !overFilterPanel;
 
         dev = Math.max(1.0, (double) mc.getWindow().getWidth() / (double) this.width);
         clipX0 = (int) Math.round(mapX0 * dev);
@@ -255,8 +353,8 @@ public class MapScreen extends Screen {
         boolean recording = RecordingState.get().isActive() && manager != null;
         if (!recording) {
             zoneCount = 0;
-            zoneScanR = 0;
-        } else if (frame % 3 == 0) {
+            zoneSide = 0;
+        } else if (frame % 3 == 0 || zoneSide == 0) {
             updateZone(mc, level, player);
         }
 
@@ -375,33 +473,32 @@ public class MapScreen extends Screen {
                 int y1 = (int) Math.round((mapCY + ((zoneZ[i] + 1) * 16.0 - centerZ) * scale) * dev);
                 fillI(g, x0, y0, x1, y1, 0x46FF1A1A);
             }
-            if (zoneScanR > 0) {
-                int side = zoneScanR * 2 + 1;
+            if (zoneSide > 0) {
                 int t = Math.max(2, (int) Math.round(dev));
-                int edgeCol = 0xEEFF4040;
-                for (int gz = 0; gz < side; gz++) {
-                    int cz = zoneCz - zoneScanR + gz;
-                    int rowOff = gz * side;
+                int borderColor = 0xEEFF4040;
+                for (int iz = 0; iz < zoneSide; iz++) {
+                    int cz = zoneMinZ + iz;
                     int y0 = (int) Math.round((mapCY + (cz * 16.0 - centerZ) * scale) * dev);
                     int y1 = (int) Math.round((mapCY + ((cz + 1) * 16.0 - centerZ) * scale) * dev);
-                    for (int gx = 0; gx < side; gx++) {
-                        if (!zoneGrid[rowOff + gx]) {
+                    int rowOff = iz * zoneSide;
+                    for (int ix = 0; ix < zoneSide; ix++) {
+                        if (!zoneGrid[rowOff + ix]) {
                             continue;
                         }
-                        int cx = zoneCx - zoneScanR + gx;
+                        int cx = zoneMinX + ix;
                         int x0 = (int) Math.round((mapCX + (cx * 16.0 - centerX) * scale) * dev);
                         int x1 = (int) Math.round((mapCX + ((cx + 1) * 16.0 - centerX) * scale) * dev);
-                        if (gz == 0 || !zoneGrid[(gz - 1) * side + gx]) {
-                            fillI(g, x0, y0, x1, y0 + t, edgeCol);
+                        if (iz == 0 || !zoneGrid[rowOff - zoneSide + ix]) {
+                            fillI(g, x0, y0, x1, y0 + t, borderColor);
                         }
-                        if (gz == side - 1 || !zoneGrid[(gz + 1) * side + gx]) {
-                            fillI(g, x0, y1 - t, x1, y1, edgeCol);
+                        if (iz == zoneSide - 1 || !zoneGrid[rowOff + zoneSide + ix]) {
+                            fillI(g, x0, y1 - t, x1, y1, borderColor);
                         }
-                        if (gx == 0 || !zoneGrid[rowOff + gx - 1]) {
-                            fillI(g, x0, y0, x0 + t, y1, edgeCol);
+                        if (ix == 0 || !zoneGrid[rowOff + ix - 1]) {
+                            fillI(g, x0, y0, x0 + t, y1, borderColor);
                         }
-                        if (gx == side - 1 || !zoneGrid[rowOff + gx + 1]) {
-                            fillI(g, x1 - t, y0, x1, y1, edgeCol);
+                        if (ix == zoneSide - 1 || !zoneGrid[rowOff + ix + 1]) {
+                            fillI(g, x1 - t, y0, x1, y1, borderColor);
                         }
                     }
                 }
@@ -479,7 +576,13 @@ public class MapScreen extends Screen {
             drawDimToggleIcon(g, overDimBtn);
         }
         if (hasProject) {
+            drawFilterToggleIcon(g, overFilterBtn);
             drawPinToggleIcon(g, overPinBtn);
+        }
+
+        hoveredColor = null;
+        if (hasProject && filterPanelOpen) {
+            drawFilterPanel(g, mouseX, mouseY, partialTick);
         }
 
         g.fill(0, 0, this.width, TOP_BAR, 0xFF1A1A22);
@@ -588,35 +691,305 @@ public class MapScreen extends Screen {
             String tip = Lang.s("map.dim_toggle_tip",
                     AreaPlan.isDimOutside() ? Lang.s("common.on") : Lang.s("common.off"));
             drawSimpleTooltip(g, List.of(tip), List.of(0xFFFFFFFF), mouseX, mouseY);
+        } else if (overFilterBtn) {
+            String tip = Lang.s("map.filter_btn_tip");
+            if (MapPinFilter.isRestricting()) {
+                drawSimpleTooltip(g, List.of(tip, Lang.s("map.filter_active_tip")),
+                        List.of(0xFFFFFFFF, 0xFFFFD040), mouseX, mouseY);
+            } else {
+                drawSimpleTooltip(g, List.of(tip), List.of(0xFFFFFFFF), mouseX, mouseY);
+            }
         } else if (overPinBtn) {
             String l1 = Lang.s("map.pins_toggle_tip", showPins ? Lang.s("common.on") : Lang.s("common.off"));
             String l2 = Lang.s("map.pins_unopened_tip",
                     ContainerDatabase.showUnopened() ? Lang.s("common.on") : Lang.s("common.off"));
             drawSimpleTooltip(g, List.of(l1, l2), List.of(0xFFFFFFFF, 0xFF9AA0B0), mouseX, mouseY);
+        } else if (hoveredColor != null) {
+            drawSimpleTooltip(g,
+                    List.of(Lang.s(hoveredColor.langKey()), Lang.s("map.filter.color_hint")),
+                    List.of(0xFFFFFFFF, 0xFF9AA0B0), mouseX, mouseY);
         } else if (hoveredPin != null) {
             drawPinTooltip(g, hoveredPin, mouseX, mouseY);
         }
     }
 
-    @Override
-    public boolean keyPressed(KeyEvent event) {
-        if (System.currentTimeMillis() - openedAtMs >= 180L
-                && !(this.getFocused() instanceof EditBox eb && eb.canConsumeInput())) {
-            if (ChunkVaultClient.matchesOpenMap(event)) {
-                this.onClose();
+    private void drawFilterToggleIcon(GuiGraphicsExtractor g, boolean hover) {
+        int border = filterPanelOpen ? 0xFF38D8FF : hover ? 0xFFFFFFFF : 0xFF3A3A48;
+        int bg = filterPanelOpen ? 0xF01C2836 : hover ? 0xF0262A34 : 0xE014161C;
+        g.fill(filterBtnX0 - 1, filterBtnY0 - 1, filterBtnX1 + 1, filterBtnY1 + 1, border);
+        g.fill(filterBtnX0, filterBtnY0, filterBtnX1, filterBtnY1, bg);
+
+        int cx = (filterBtnX0 + filterBtnX1) / 2;
+        int cy = (filterBtnY0 + filterBtnY1) / 2;
+        int col = filterPanelOpen ? 0xFF38D8FF : 0xFFFFFFFF;
+
+        g.fill(cx - 6, cy - 5, cx + 6, cy - 3, col);
+        g.fill(cx - 4, cy - 3, cx + 4, cy - 1, col);
+        g.fill(cx - 2, cy - 1, cx + 2, cy + 1, col);
+        g.fill(cx - 1, cy + 1, cx + 1, cy + 5, col);
+        g.fill(cx, cy + 5, cx + 1, cy + 6, col);
+
+        if (MapPinFilter.isRestricting()) {
+            g.fill(filterBtnX1 - 6, filterBtnY0 + 2, filterBtnX1 - 2, filterBtnY0 + 6, 0xFFFFD040);
+        }
+    }
+
+    private void drawFilterPanel(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
+        g.fill(fpX0 - 1, fpY0 - 1, fpX1 + 1, fpY1 + 1, 0xFF3A3A48);
+        g.fill(fpX0, fpY0, fpX1, fpY1, 0xF214161C);
+
+        int innerX0 = fpX0 + 8;
+        int innerX1 = fpX1 - 8;
+        int innerW = innerX1 - innerX0;
+
+        g.text(this.font, Lang.s("map.filter.title"), innerX0, fpY0 + 7, 0xFFFFFFFF, true);
+
+        String resetTxt = Lang.s("map.filter.reset");
+        int rw = this.font.width(resetTxt) + 8;
+        fpResetX1 = innerX1;
+        fpResetX0 = fpResetX1 - rw;
+        fpResetY0 = fpY0 + 5;
+        fpResetY1 = fpY0 + 18;
+        boolean resetHover = mouseX >= fpResetX0 && mouseX < fpResetX1 && mouseY >= fpResetY0 && mouseY < fpResetY1;
+        g.fill(fpResetX0, fpResetY0, fpResetX1, fpResetY1, 0xFF5A6074);
+        g.fill(fpResetX0 + 1, fpResetY0 + 1, fpResetX1 - 1, fpResetY1 - 1,
+                resetHover ? 0xFF7A3838 : MapPinFilter.isRestricting() ? 0xFF5A2A2A : 0xFF262A34);
+        g.text(this.font, resetTxt, fpResetX0 + 4, fpResetY0 + 3, 0xFFFFFFFF, true);
+
+        if (filterSearchBox != null) {
+            filterSearchBox.extractRenderState(g, mouseX, mouseY, partialTick);
+        }
+
+        fpStatusY0 = fpY0 + 44;
+        fpStatusY1 = fpStatusY0 + 15;
+        int halfW = (innerW - 4) / 2;
+        drawFilterPill(g, innerX0, innerX0 + halfW, fpStatusY0, fpStatusY1,
+                Lang.s("map.filter.opened"), MapPinFilter.showOpened(), 0xFF2E6B48, mouseX, mouseY);
+        drawFilterPill(g, innerX0 + halfW + 4, innerX1, fpStatusY0, fpStatusY1,
+                Lang.s("map.filter.unopened"), MapPinFilter.showUnopened(), 0xFF8A6A1A, mouseX, mouseY);
+
+        fpTypesY0 = fpStatusY1 + 5;
+        String[] typeLabels = {
+                Lang.s("map.filter.type.chests"),
+                Lang.s("map.filter.type.barrels"),
+                Lang.s("map.filter.type.shulkers"),
+                Lang.s("map.filter.type.hoppers"),
+                Lang.s("map.filter.type.dispensers"),
+                Lang.s("map.filter.type.furnaces"),
+                Lang.s("map.filter.type.brewing"),
+                Lang.s("map.filter.type.crafters")
+        };
+        boolean[] typeActive = {
+                MapPinFilter.chests(),
+                MapPinFilter.barrels(),
+                MapPinFilter.shulkers(),
+                MapPinFilter.hoppers(),
+                MapPinFilter.dispensers(),
+                MapPinFilter.furnaces(),
+                MapPinFilter.brewing(),
+                MapPinFilter.crafters()
+        };
+        for (int i = 0; i < 8; i++) {
+            int col = i & 1;
+            int row = i >> 1;
+            int px0 = col == 0 ? innerX0 : innerX0 + halfW + 4;
+            int px1 = col == 0 ? innerX0 + halfW : innerX1;
+            int py0 = fpTypesY0 + row * 17;
+            int py1 = py0 + 15;
+            drawFilterPill(g, px0, px1, py0, py1, typeLabels[i], typeActive[i], 0xFF1F6A7A, mouseX, mouseY);
+        }
+
+        int shulkerHeaderY = fpTypesY0 + 4 * 17 + 3;
+        g.text(this.font, Lang.s("map.filter.shulker_colors"), innerX0, shulkerHeaderY + 2, 0xFF9AA0B0, true);
+
+        String noneTxt = Lang.s("map.filter.none");
+        String allTxt = Lang.s("map.filter.all");
+        int noneW = this.font.width(noneTxt) + 8;
+        int allW = this.font.width(allTxt) + 8;
+        fpShulkerBtnY0 = shulkerHeaderY;
+        fpShulkerBtnY1 = shulkerHeaderY + 12;
+        fpShulkerNoneX1 = innerX1;
+        fpShulkerNoneX0 = fpShulkerNoneX1 - noneW;
+        fpShulkerAllX1 = fpShulkerNoneX0 - 3;
+        fpShulkerAllX0 = fpShulkerAllX1 - allW;
+
+        drawTinyAction(g, fpShulkerAllX0, fpShulkerAllX1, fpShulkerBtnY0, fpShulkerBtnY1, allTxt, mouseX, mouseY);
+        drawTinyAction(g, fpShulkerNoneX0, fpShulkerNoneX1, fpShulkerBtnY0, fpShulkerBtnY1, noneTxt, mouseX, mouseY);
+
+        fpSwatchesY0 = fpShulkerBtnY1 + 4;
+        int swW = 20;
+        int swH = 14;
+        int swGap = 4;
+        List<MapPinFilter.ShulkerColor> colors = MapPinFilter.SHULKER_COLORS;
+        for (int i = 0; i < colors.size(); i++) {
+            int row = i < 9 ? 0 : 1;
+            int col = i < 9 ? i : i - 9;
+            int sx0 = innerX0 + col * (swW + swGap);
+            int sy0 = fpSwatchesY0 + row * (swH + 4);
+            int sx1 = sx0 + swW;
+            int sy1 = sy0 + swH;
+            MapPinFilter.ShulkerColor sc = colors.get(i);
+            boolean enabled = MapPinFilter.isShulkerColorEnabled(sc.id());
+            boolean hover = mouseX >= sx0 && mouseX < sx1 && mouseY >= sy0 && mouseY < sy1;
+            if (hover) {
+                hoveredColor = sc;
+            }
+            int border = hover ? 0xFFFFFFFF : enabled ? 0xFFB0B8CC : 0xFF343844;
+            g.fill(sx0, sy0, sx1, sy1, border);
+            int fill = sc.rgb();
+            if (!enabled) {
+                int r = ((fill >> 16) & 0xFF) / 3;
+                int gr = ((fill >> 8) & 0xFF) / 3;
+                int b = (fill & 0xFF) / 3;
+                fill = 0xFF000000 | (r << 16) | (gr << 8) | b;
+            }
+            g.fill(sx0 + 1, sy0 + 1, sx1 - 1, sy1 - 1, fill);
+            if (!enabled) {
+                for (int d = 2; d < swH - 2; d++) {
+                    int lx = sx0 + 2 + (d - 2) * (swW - 5) / Math.max(1, swH - 5);
+                    g.fill(lx, sy0 + d, lx + 2, sy0 + d + 1, 0xDDFF5050);
+                }
+            }
+        }
+    }
+
+    private void drawFilterPill(GuiGraphicsExtractor g, int x0, int x1, int y0, int y1,
+                                String label, boolean active, int activeBg, int mouseX, int mouseY) {
+        boolean hover = mouseX >= x0 && mouseX < x1 && mouseY >= y0 && mouseY < y1;
+        int border = hover ? 0xFFFFFFFF : active ? 0xFF70849A : 0xFF343844;
+        int bg = active ? activeBg : hover ? 0xFF282C36 : 0xFF1A1D24;
+        g.fill(x0, y0, x1, y1, border);
+        g.fill(x0 + 1, y0 + 1, x1 - 1, y1 - 1, bg);
+        int textColor = active ? 0xFFFFFFFF : 0xFF808696;
+        String fit = fitText(label, (x1 - x0) - 8);
+        int tx = x0 + ((x1 - x0) - this.font.width(fit)) / 2;
+        g.text(this.font, fit, tx, y0 + 4, textColor, true);
+    }
+
+    private void drawTinyAction(GuiGraphicsExtractor g, int x0, int x1, int y0, int y1,
+                                String label, int mouseX, int mouseY) {
+        boolean hover = mouseX >= x0 && mouseX < x1 && mouseY >= y0 && mouseY < y1;
+        g.fill(x0, y0, x1, y1, hover ? 0xFFFFFFFF : 0xFF444A5C);
+        g.fill(x0 + 1, y0 + 1, x1 - 1, y1 - 1, hover ? 0xFF343A4A : 0xFF1E222C);
+        g.text(this.font, label, x0 + 4, y0 + 2, 0xFFE0E4EE, true);
+    }
+
+    private String fitText(String text, int maxW) {
+        if (maxW <= 0) {
+            return "";
+        }
+        if (this.font.width(text) <= maxW) {
+            return text;
+        }
+        String cut = text;
+        while (cut.length() > 1 && this.font.width(cut + "…") > maxW) {
+            cut = cut.substring(0, cut.length() - 1);
+        }
+        return cut + "…";
+    }
+
+    private boolean handleFilterPanelClick(MouseButtonEvent event, boolean isDoubleClick) {
+        double mx = event.x();
+        double my = event.y();
+        int btn = event.button();
+
+        if (filterSearchBox != null
+                && mx >= filterSearchBox.getX() && mx < filterSearchBox.getX() + filterSearchBox.getWidth()
+                && my >= filterSearchBox.getY() && my < filterSearchBox.getY() + filterSearchBox.getHeight()) {
+            this.setFocused(filterSearchBox);
+            filterSearchBox.setFocused(true);
+            filterSearchBox.mouseClicked(event, isDoubleClick);
+            return true;
+        }
+        unfocusFilterSearch();
+
+        if (btn == InputConstants.MOUSE_BUTTON_LEFT
+                && mx >= fpResetX0 && mx < fpResetX1 && my >= fpResetY0 && my < fpResetY1) {
+            MapPinFilter.reset();
+            if (filterSearchBox != null) {
+                filterSearchBox.setValue("");
+            }
+            return true;
+        }
+
+        int innerX0 = fpX0 + 8;
+        int innerX1 = fpX1 - 8;
+        int innerW = innerX1 - innerX0;
+        int halfW = (innerW - 4) / 2;
+
+        if (btn == InputConstants.MOUSE_BUTTON_LEFT && my >= fpStatusY0 && my < fpStatusY1) {
+            if (mx >= innerX0 && mx < innerX0 + halfW) {
+                MapPinFilter.toggleShowOpened();
                 return true;
             }
-            if (ChunkVaultClient.matchesToggleRecord(event)) {
-                toggleRecording();
-                return true;
-            }
-            if (ChunkVaultClient.matchesToggleHud(event)) {
-                boolean on = AreaPlan.toggleHud();
-                showToast(Lang.s("area.btn_hud", on ? Lang.s("common.on") : Lang.s("common.off")));
+            if (mx >= innerX0 + halfW + 4 && mx < innerX1) {
+                MapPinFilter.toggleShowUnopened();
                 return true;
             }
         }
-        return super.keyPressed(event);
+
+        if (btn == InputConstants.MOUSE_BUTTON_LEFT && my >= fpTypesY0 && my < fpTypesY0 + 4 * 17) {
+            int row = (int) ((my - fpTypesY0) / 17);
+            double localY = (my - fpTypesY0) - row * 17;
+            if (row >= 0 && row < 4 && localY < 15) {
+                int col = -1;
+                if (mx >= innerX0 && mx < innerX0 + halfW) {
+                    col = 0;
+                } else if (mx >= innerX0 + halfW + 4 && mx < innerX1) {
+                    col = 1;
+                }
+                if (col >= 0) {
+                    int idx = row * 2 + col;
+                    switch (idx) {
+                        case 0 -> MapPinFilter.toggleChests();
+                        case 1 -> MapPinFilter.toggleBarrels();
+                        case 2 -> MapPinFilter.toggleShulkers();
+                        case 3 -> MapPinFilter.toggleHoppers();
+                        case 4 -> MapPinFilter.toggleDispensers();
+                        case 5 -> MapPinFilter.toggleFurnaces();
+                        case 6 -> MapPinFilter.toggleBrewing();
+                        case 7 -> MapPinFilter.toggleCrafters();
+                        default -> {}
+                    }
+                    return true;
+                }
+            }
+        }
+
+        if (btn == InputConstants.MOUSE_BUTTON_LEFT && my >= fpShulkerBtnY0 && my < fpShulkerBtnY1) {
+            if (mx >= fpShulkerAllX0 && mx < fpShulkerAllX1) {
+                MapPinFilter.setAllShulkerColors(true);
+                return true;
+            }
+            if (mx >= fpShulkerNoneX0 && mx < fpShulkerNoneX1) {
+                MapPinFilter.setAllShulkerColors(false);
+                return true;
+            }
+        }
+
+        if (btn == InputConstants.MOUSE_BUTTON_LEFT || btn == InputConstants.MOUSE_BUTTON_RIGHT) {
+            int swW = 20;
+            int swH = 14;
+            int swGap = 4;
+            List<MapPinFilter.ShulkerColor> colors = MapPinFilter.SHULKER_COLORS;
+            for (int i = 0; i < colors.size(); i++) {
+                int row = i < 9 ? 0 : 1;
+                int col = i < 9 ? i : i - 9;
+                int sx0 = innerX0 + col * (swW + swGap);
+                int sy0 = fpSwatchesY0 + row * (swH + 4);
+                if (mx >= sx0 && mx < sx0 + swW && my >= sy0 && my < sy0 + swH) {
+                    String colorId = colors.get(i).id();
+                    if (btn == InputConstants.MOUSE_BUTTON_RIGHT) {
+                        MapPinFilter.soloShulkerColor(colorId);
+                    } else {
+                        MapPinFilter.toggleShulkerColor(colorId);
+                    }
+                    return true;
+                }
+            }
+        }
+
+        return true;
     }
 
     private void drawDimToggleIcon(GuiGraphicsExtractor g, boolean hover) {
@@ -723,9 +1096,9 @@ public class MapScreen extends Screen {
         int vMaxX = Math.min(aMaxX, maxCx);
         int vMinZ = Math.max(aMinZ, minCz);
         int vMaxZ = Math.min(aMaxZ, maxCz);
+        long visArea = (long) (vMaxX - vMinX + 1) * (long) (vMaxZ - vMinZ + 1);
 
-        if (vMaxX >= vMinX && vMaxZ >= vMinZ
-                && (long) (vMaxX - vMinX + 1) * (long) (vMaxZ - vMinZ + 1) <= 16384L) {
+        if (vMinX <= vMaxX && vMinZ <= vMaxZ && visArea > 0L && visArea <= 16384L) {
             for (int cz = vMinZ; cz <= vMaxZ; cz++) {
                 int runStart = Integer.MIN_VALUE;
                 for (int cx = vMinX; cx <= vMaxX + 1; cx++) {
@@ -886,13 +1259,12 @@ public class MapScreen extends Screen {
         if (visible.isEmpty()) {
             return;
         }
-        boolean includeUnopened = ContainerDatabase.showUnopened();
         Map<Long, List<ContainerDatabase.ContainerEntry>> grouped = new LinkedHashMap<>();
         for (ContainerDatabase.ContainerEntry e : visible) {
-            if (!includeUnopened && !e.opened()) {
+            if (ContainerDatabase.isSecondaryHalf(e)) {
                 continue;
             }
-            if (ContainerDatabase.isSecondaryHalf(e)) {
+            if (!MapPinFilter.matches(e)) {
                 continue;
             }
             long colKey = (((long) e.x()) << 32) | (e.z() & 0xFFFFFFFFL);
@@ -1025,33 +1397,36 @@ public class MapScreen extends Screen {
     private void updateZone(Minecraft mc, ClientLevel level, LocalPlayer player) {
         int effR = Math.max(1, mc.options.getEffectiveRenderDistance());
         int scanR = effR + 1;
-        int side = scanR * 2 + 1;
+        int scanRSq = scanR * scanR;
         int pcx = (int) Math.floor(player.getX() / 16.0);
         int pcz = (int) Math.floor(player.getZ() / 16.0);
-        zoneScanR = scanR;
-        zoneCx = pcx;
-        zoneCz = pcz;
-        zoneCount = 0;
-
+        int side = scanR * 2 + 1;
         if (zoneGrid.length != side * side) {
             zoneGrid = new boolean[side * side];
         } else {
             Arrays.fill(zoneGrid, false);
         }
+        zoneMinX = pcx - scanR;
+        zoneMinZ = pcz - scanR;
+        zoneSide = side;
+        zoneCount = 0;
 
-        int maxDistSq = scanR * scanR;
-        for (int dz = -scanR; dz <= scanR; dz++) {
-            int cz = pcz + dz;
-            int rowOff = (dz + scanR) * side;
+        for (int iz = 0; iz < side; iz++) {
+            int dz = iz - scanR;
+            int cz = zoneMinZ + iz;
+            int rowOff = iz * side;
             int runStart = Integer.MIN_VALUE;
-            for (int dx = -scanR; dx <= scanR + 1; dx++) {
-                int cx = pcx + dx;
-                boolean loaded = dx <= scanR && (dx * dx + dz * dz) <= maxDistSq && isLoaded(level, cx, cz);
-                if (loaded) {
-                    zoneGrid[rowOff + dx + scanR] = true;
+            for (int ix = 0; ix <= side; ix++) {
+                boolean loaded = false;
+                if (ix < side) {
+                    int dx = ix - scanR;
+                    if (dx * dx + dz * dz <= scanRSq && isLoaded(level, zoneMinX + ix, cz)) {
+                        loaded = true;
+                        zoneGrid[rowOff + ix] = true;
+                    }
                 }
                 if (loaded && runStart == Integer.MIN_VALUE) {
-                    runStart = cx;
+                    runStart = zoneMinX + ix;
                 } else if (!loaded && runStart != Integer.MIN_VALUE) {
                     if (zoneCount == zoneX0.length) {
                         int n = zoneCount * 2;
@@ -1060,7 +1435,7 @@ public class MapScreen extends Screen {
                         zoneZ = Arrays.copyOf(zoneZ, n);
                     }
                     zoneX0[zoneCount] = runStart;
-                    zoneX1[zoneCount] = cx;
+                    zoneX1[zoneCount] = zoneMinX + ix;
                     zoneZ[zoneCount] = cz;
                     zoneCount++;
                     runStart = Integer.MIN_VALUE;
@@ -1180,9 +1555,54 @@ public class MapScreen extends Screen {
     }
 
     @Override
+    public boolean keyPressed(KeyEvent event) {
+        if (filterPanelOpen && event.isEscape()) {
+            filterPanelOpen = false;
+            unfocusFilterSearch();
+            return true;
+        }
+        if (filterSearchBox != null && filterSearchBox.isFocused() && filterSearchBox.canConsumeInput()) {
+            return super.keyPressed(event);
+        }
+        if (System.currentTimeMillis() - openedAtMs >= 180L
+                && !(this.getFocused() instanceof EditBox eb && eb.canConsumeInput())) {
+            if (ChunkVaultClient.matchesOpenMap(event)) {
+                this.onClose();
+                return true;
+            }
+            if (ChunkVaultClient.matchesToggleRecord(event)) {
+                toggleRecording();
+                return true;
+            }
+            if (ChunkVaultClient.matchesToggleHud(event)) {
+                boolean on = AreaPlan.toggleHud();
+                showToast(Lang.s("area.btn_hud", on ? Lang.s("common.on") : Lang.s("common.off")));
+                return true;
+            }
+        }
+        return super.keyPressed(event);
+    }
+
+    @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean isDoubleClick) {
         double mx = event.x();
         double my = event.y();
+
+        if (filterPanelOpen && fpX1 > fpX0 && mx >= fpX0 && mx < fpX1 && my >= fpY0 && my < fpY1) {
+            return handleFilterPanelClick(event, isDoubleClick);
+        }
+
+        unfocusFilterSearch();
+
+        if (filterBtnX1 > filterBtnX0 && mx >= filterBtnX0 && mx < filterBtnX1 && my >= filterBtnY0 && my < filterBtnY1) {
+            if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+                filterPanelOpen = !filterPanelOpen;
+                if (!filterPanelOpen) {
+                    unfocusFilterSearch();
+                }
+                return true;
+            }
+        }
 
         if (dimBtnX1 > dimBtnX0 && mx >= dimBtnX0 && mx < dimBtnX1 && my >= dimBtnY0 && my < dimBtnY1) {
             if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
@@ -1429,7 +1849,8 @@ public class MapScreen extends Screen {
                 if (mc.level != null) {
                     String dim = mc.level.dimension().identifier().toString();
                     ContainerDatabase.ContainerEntry top = hoveredPin.top();
-                    mc.setScreenAndShow(new ContainerViewerScreen(this, dim, top.x(), top.z(), top.key()));
+                    mc.setScreenAndShow(new ContainerViewerScreen(
+                            this, dim, top.x(), top.z(), top.key(), MapPinFilter::matches));
                     return true;
                 }
             }
@@ -1442,6 +1863,9 @@ public class MapScreen extends Screen {
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
         if (scrollY == 0) {
             return false;
+        }
+        if (filterPanelOpen && fpX1 > fpX0 && mouseX >= fpX0 && mouseX < fpX1 && mouseY >= fpY0 && mouseY < fpY1) {
+            return true;
         }
         double mapCX = this.width / 2.0;
         double mapCY = TOP_BAR + (this.height - TOP_BAR - BOTTOM_BAR) / 2.0;
@@ -1458,6 +1882,11 @@ public class MapScreen extends Screen {
 
     @Override
     public void onClose() {
+        if (filterPanelOpen) {
+            filterPanelOpen = false;
+            unfocusFilterSearch();
+            return;
+        }
         if (selectingArea) {
             selectingArea = false;
             draggingArea = false;
