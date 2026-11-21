@@ -62,6 +62,7 @@ public final class MapPinFilter {
     private static boolean chests = true;
     private static boolean barrels = true;
     private static boolean shulkers = true;
+    private static boolean enderChests = true;
     private static boolean hoppers = true;
     private static boolean dispensers = true;
     private static boolean furnaces = true;
@@ -131,6 +132,17 @@ public final class MapPinFilter {
     public static void toggleShulkers() {
         synchronized (LOCK) {
             shulkers = !shulkers;
+            saveAsyncLocked();
+        }
+    }
+
+    public static boolean enderChests() {
+        return enderChests;
+    }
+
+    public static void toggleEnderChests() {
+        synchronized (LOCK) {
+            enderChests = !enderChests;
             saveAsyncLocked();
         }
     }
@@ -260,6 +272,7 @@ public final class MapPinFilter {
             chests = true;
             barrels = true;
             shulkers = true;
+            enderChests = true;
             hoppers = true;
             dispensers = true;
             furnaces = true;
@@ -282,7 +295,7 @@ public final class MapPinFilter {
             if (!showOpened || !ContainerDatabase.showUnopened()) {
                 return true;
             }
-            if (!chests || !barrels || !shulkers || !hoppers || !dispensers || !furnaces || !brewing || !crafters) {
+            if (!chests || !barrels || !shulkers || !enderChests || !hoppers || !dispensers || !furnaces || !brewing || !crafters) {
                 return true;
             }
             if (enabledShulkerColors.size() < SHULKER_COLORS.size()) {
@@ -337,6 +350,10 @@ public final class MapPinFilter {
             }
             String colorId = shulkerColorId(id);
             if (!isShulkerColorEnabled(colorId)) {
+                return false;
+            }
+        } else if (id.endsWith(":ender_chest")) {
+            if (!enderChests) {
                 return false;
             }
         } else if (id.endsWith(":barrel")) {
@@ -439,6 +456,7 @@ public final class MapPinFilter {
             chests = Boolean.parseBoolean(p.getProperty("chests", "true"));
             barrels = Boolean.parseBoolean(p.getProperty("barrels", "true"));
             shulkers = Boolean.parseBoolean(p.getProperty("shulkers", "true"));
+            enderChests = Boolean.parseBoolean(p.getProperty("enderChests", "true"));
             hoppers = Boolean.parseBoolean(p.getProperty("hoppers", "true"));
             dispensers = Boolean.parseBoolean(p.getProperty("dispensers", "true"));
             furnaces = Boolean.parseBoolean(p.getProperty("furnaces", "true"));
@@ -464,6 +482,7 @@ public final class MapPinFilter {
         p.setProperty("chests", Boolean.toString(chests));
         p.setProperty("barrels", Boolean.toString(barrels));
         p.setProperty("shulkers", Boolean.toString(shulkers));
+        p.setProperty("enderChests", Boolean.toString(enderChests));
         p.setProperty("hoppers", Boolean.toString(hoppers));
         p.setProperty("dispensers", Boolean.toString(dispensers));
         p.setProperty("furnaces", Boolean.toString(furnaces));
