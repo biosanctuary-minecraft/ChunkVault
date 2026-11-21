@@ -115,6 +115,7 @@ public final class ContainerDatabase {
 
     private static final Map<String, ContainerEntry> ENTRIES = new ConcurrentHashMap<>();
     private static final Object INDEX_LOCK = new Object();
+    private static final Object WRITE_LOCK = new Object();
     private static final Map<String, Map<Long, List<ContainerEntry>>> BY_CHUNK = new ConcurrentHashMap<>();
     private static final Map<String, Map<Long, List<ContainerEntry>>> BY_COLUMN = new ConcurrentHashMap<>();
     private static volatile Path activeProjectDir;
@@ -715,37 +716,39 @@ public final class ContainerDatabase {
     }
 
     private static void writeFile(Path file, List<ContainerEntry> entries) {
-        try {
-            Files.createDirectories(file.getParent());
-            CompoundTag root = new CompoundTag();
-            for (ContainerEntry e : entries) {
-                CompoundTag tag = new CompoundTag();
-                tag.putString("type", e.blockId());
-                tag.put("data", e.blockEntityTag());
-                if (e.customName() != null && !e.customName().isEmpty()) {
-                    tag.putString("customName", e.customName());
+        synchronized (WRITE_LOCK) {
+            try {
+                Files.createDirectories(file.getParent());
+                CompoundTag root = new CompoundTag();
+                for (ContainerEntry e : entries) {
+                    CompoundTag tag = new CompoundTag();
+                    tag.putString("type", e.blockId());
+                    tag.put("data", e.blockEntityTag());
+                    if (e.customName() != null && !e.customName().isEmpty()) {
+                        tag.putString("customName", e.customName());
+                    }
+                    tag.putInt("slotCount", e.slotCount());
+                    tag.putInt("filledSlots", e.filledSlots());
+                    tag.putLong("updatedAt", e.updatedAt());
+                    tag.putBoolean("opened", e.opened());
+                    if (e.chestType() != null && !e.chestType().isEmpty()) {
+                        tag.putString("chestType", e.chestType());
+                    }
+                    if (e.connectedPos() != null) {
+                        tag.putInt("connX", e.connectedPos().getX());
+                        tag.putInt("connY", e.connectedPos().getY());
+                        tag.putInt("connZ", e.connectedPos().getZ());
+                    }
+                    root.put(e.key(), tag);
                 }
-                tag.putInt("slotCount", e.slotCount());
-                tag.putInt("filledSlots", e.filledSlots());
-                tag.putLong("updatedAt", e.updatedAt());
-                tag.putBoolean("opened", e.opened());
-                if (e.chestType() != null && !e.chestType().isEmpty()) {
-                    tag.putString("chestType", e.chestType());
-                }
-                if (e.connectedPos() != null) {
-                    tag.putInt("connX", e.connectedPos().getX());
-                    tag.putInt("connY", e.connectedPos().getY());
-                    tag.putInt("connZ", e.connectedPos().getZ());
-                }
-                root.put(e.key(), tag);
+                ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+                NbtIo.write(root, new DataOutputStream(bytes));
+                Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
+                Files.write(tmp, bytes.toByteArray());
+                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
+            } catch (Exception e) {
+                System.err.println("[ChunkVault] Failed to write chunkvault_containers.dat: " + e);
             }
-            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-            NbtIo.write(root, new DataOutputStream(bytes));
-            Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
-            Files.write(tmp, bytes.toByteArray());
-            Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
-        } catch (Exception e) {
-            System.err.println("[ChunkVault] Failed to write chunkvault_containers.dat: " + e);
         }
     }
 
