@@ -674,19 +674,22 @@ public class MapScreen extends Screen {
         int vMinZ = Math.max(aMinZ, minCz);
         int vMaxZ = Math.min(aMaxZ, maxCz);
 
-        for (int cz = vMinZ; cz <= vMaxZ; cz++) {
-            int runStart = Integer.MIN_VALUE;
-            for (int cx = vMinX; cx <= vMaxX + 1; cx++) {
-                boolean missing = cx <= vMaxX && !cache.containsKey(MapCache.key(cx, cz));
-                if (missing && runStart == Integer.MIN_VALUE) {
-                    runStart = cx;
-                } else if (!missing && runStart != Integer.MIN_VALUE) {
-                    int x0 = (int) Math.round((mapCX + (runStart * 16.0 - centerX) * scale) * dev);
-                    int x1 = (int) Math.round((mapCX + (cx * 16.0 - centerX) * scale) * dev);
-                    int y0 = (int) Math.round((mapCY + (cz * 16.0 - centerZ) * scale) * dev);
-                    int y1 = (int) Math.round((mapCY + ((cz + 1) * 16.0 - centerZ) * scale) * dev);
-                    fillI(g, x0, y0, x1, y1, 0x3620C8FF);
-                    runStart = Integer.MIN_VALUE;
+        if (vMaxX >= vMinX && vMaxZ >= vMinZ
+                && (long) (vMaxX - vMinX + 1) * (long) (vMaxZ - vMinZ + 1) <= 16384L) {
+            for (int cz = vMinZ; cz <= vMaxZ; cz++) {
+                int runStart = Integer.MIN_VALUE;
+                for (int cx = vMinX; cx <= vMaxX + 1; cx++) {
+                    boolean missing = cx <= vMaxX && !cache.containsKey(MapCache.key(cx, cz));
+                    if (missing && runStart == Integer.MIN_VALUE) {
+                        runStart = cx;
+                    } else if (!missing && runStart != Integer.MIN_VALUE) {
+                        int x0 = (int) Math.round((mapCX + (runStart * 16.0 - centerX) * scale) * dev);
+                        int x1 = (int) Math.round((mapCX + (cx * 16.0 - centerX) * scale) * dev);
+                        int y0 = (int) Math.round((mapCY + (cz * 16.0 - centerZ) * scale) * dev);
+                        int y1 = (int) Math.round((mapCY + ((cz + 1) * 16.0 - centerZ) * scale) * dev);
+                        fillI(g, x0, y0, x1, y1, 0x3620C8FF);
+                        runStart = Integer.MIN_VALUE;
+                    }
                 }
             }
         }
