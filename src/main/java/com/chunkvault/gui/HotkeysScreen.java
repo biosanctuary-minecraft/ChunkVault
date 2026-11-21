@@ -17,7 +17,7 @@ public class HotkeysScreen extends Screen {
 
     private static final int ROW_H = 28;
     private static final int PANEL_MAX_W = 460;
-    private static final int KEY_BTN_W = 112;
+    private static final int KEY_BTN_W = 132;
     private static final int RESET_BTN_W = 22;
 
     private final Screen parent;
