@@ -26,6 +26,7 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.input.KeyEvent;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
@@ -67,6 +68,49 @@ public class ChunkVaultClient implements ClientModInitializer {
 
     public static List<HotkeyEntry> hotkeys() {
         return hotkeys;
+    }
+
+    public static boolean matchesOpenMap(KeyEvent event) {
+        if (openMapKey == null || openMapKey.isUnbound()) {
+            return false;
+        }
+        if (openMapKey.isDefault()) {
+            var win = Minecraft.getInstance().getWindow();
+            if (openMapKey.matches(event) && InputConstants.isKeyDown(win, InputConstants.KEY_C)) {
+                return true;
+            }
+            return InputConstants.getKey(event).getValue() == InputConstants.KEY_C
+                    && InputConstants.isKeyDown(win, InputConstants.KEY_V);
+        }
+        return openMapKey.matches(event);
+    }
+
+    private static boolean matchesKey(KeyMapping mapping, KeyEvent event) {
+        return mapping != null && !mapping.isUnbound() && mapping.matches(event);
+    }
+
+    public static boolean matchesOpenChests(KeyEvent event) {
+        return matchesKey(openChestsKey, event);
+    }
+
+    public static boolean matchesOpenProjects(KeyEvent event) {
+        return matchesKey(openProjectsKey, event);
+    }
+
+    public static boolean matchesAreaCoords(KeyEvent event) {
+        return matchesKey(areaCoordsKey, event);
+    }
+
+    public static boolean matchesOpenSettings(KeyEvent event) {
+        return matchesKey(openSettingsKey, event);
+    }
+
+    public static boolean matchesToggleRecord(KeyEvent event) {
+        return matchesKey(toggleRecordKey, event);
+    }
+
+    public static boolean matchesToggleHud(KeyEvent event) {
+        return matchesKey(toggleHudKey, event);
     }
 
     @Override
