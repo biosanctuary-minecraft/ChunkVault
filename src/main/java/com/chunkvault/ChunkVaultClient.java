@@ -6,6 +6,7 @@ import com.chunkvault.gui.ContainerDatabaseScreen;
 import com.chunkvault.gui.ExplorerScreen;
 import com.chunkvault.gui.MapCache;
 import com.chunkvault.gui.MapScreen;
+import com.chunkvault.gui.MinimapOverlay;
 import com.chunkvault.gui.ProjectMap;
 import com.chunkvault.gui.SettingsScreen;
 import com.chunkvault.save.PlayerDataWriter;
@@ -60,6 +61,7 @@ public class ChunkVaultClient implements ClientModInitializer {
     private static KeyMapping openProjectsKey;
     private static KeyMapping areaCoordsKey;
     private static KeyMapping toggleHudKey;
+    private static KeyMapping toggleMinimapKey;
     private static KeyMapping openSettingsKey;
     private static List<HotkeyEntry> hotkeys = List.of();
 
@@ -105,6 +107,10 @@ public class ChunkVaultClient implements ClientModInitializer {
         return toggleHudKey != null && !toggleHudKey.isUnbound() && toggleHudKey.matches(event);
     }
 
+    public static boolean matchesToggleMinimap(KeyEvent event) {
+        return toggleMinimapKey != null && !toggleMinimapKey.isUnbound() && toggleMinimapKey.matches(event);
+    }
+
     public static boolean matchesOpenSettings(KeyEvent event) {
         return openSettingsKey != null && !openSettingsKey.isUnbound() && openSettingsKey.matches(event);
     }
@@ -147,6 +153,12 @@ public class ChunkVaultClient implements ClientModInitializer {
                 InputConstants.UNKNOWN.getValue(),
                 KEY_CATEGORY
         ));
+        toggleMinimapKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
+                "key.chunkvault.toggle_minimap",
+                InputConstants.Type.KEYSYM,
+                InputConstants.UNKNOWN.getValue(),
+                KEY_CATEGORY
+        ));
         openSettingsKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
                 "key.chunkvault.open_settings",
                 InputConstants.Type.KEYSYM,
@@ -161,10 +173,12 @@ public class ChunkVaultClient implements ClientModInitializer {
                 new HotkeyEntry(openProjectsKey, "hotkeys.open_projects", "hotkeys.open_projects.desc", 0xFFD9AE2C, false),
                 new HotkeyEntry(areaCoordsKey, "hotkeys.area_coords", "hotkeys.area_coords.desc", 0xFF2AA8C4, false),
                 new HotkeyEntry(toggleHudKey, "hotkeys.toggle_hud", "hotkeys.toggle_hud.desc", 0xFF70FF90, false),
+                new HotkeyEntry(toggleMinimapKey, "hotkeys.toggle_minimap", "hotkeys.toggle_minimap.desc", 0xFF38D8FF, false),
                 new HotkeyEntry(openSettingsKey, "hotkeys.open_settings", "hotkeys.open_settings.desc", 0xFF7B90BD, false)
         );
 
         AreaHudOverlay.register();
+        MinimapOverlay.register();
 
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
             Runnable cleanup = () -> {
@@ -242,6 +256,14 @@ public class ChunkVaultClient implements ClientModInitializer {
                     boolean on = AreaPlan.toggleHud();
                     client.player.sendSystemMessage(Component.literal("§b[ChunkVault] "
                             + Lang.s("area.btn_hud", on ? Lang.s("common.on") : Lang.s("common.off"))));
+                }
+            }
+            while (toggleMinimapKey.consumeClick()) {
+                if (client.player != null) {
+                    boolean on = !ChunkVaultSettings.get().minimapEnabled();
+                    ChunkVaultSettings.get().setMinimapEnabled(on);
+                    client.player.sendSystemMessage(Component.literal("§b[ChunkVault] "
+                            + Lang.s("minimap.toggle_msg", on ? Lang.s("common.on") : Lang.s("common.off"))));
                 }
             }
             while (openSettingsKey.consumeClick()) {
