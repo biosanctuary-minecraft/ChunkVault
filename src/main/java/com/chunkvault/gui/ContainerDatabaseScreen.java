@@ -265,10 +265,11 @@ public class ContainerDatabaseScreen extends Screen {
             return;
         }
         ContainerDatabase.ContainerEntry e = rows.get(selected).item().entry();
-        parent.focusOn(e.x(), e.z());
-        Minecraft.getInstance().setScreenAndShow(parent);
+        MapScreen target = parent != null ? parent : new MapScreen();
+        target.focusOn(e.x(), e.z());
+        Minecraft.getInstance().setScreenAndShow(target);
         if (!e.dimension().equals(currentDimension())) {
-            parent.showToast(Lang.s("db.other_dim_hint", shortDim(e.dimension()), e.x(), e.y(), e.z()));
+            target.showToast(Lang.s("db.other_dim_hint", shortDim(e.dimension()), e.x(), e.y(), e.z()));
         }
     }
 
