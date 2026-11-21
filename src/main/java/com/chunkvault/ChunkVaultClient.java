@@ -10,6 +10,7 @@ import com.chunkvault.gui.ProjectMap;
 import com.chunkvault.gui.SettingsScreen;
 import com.chunkvault.save.PlayerDataWriter;
 import com.chunkvault.save.VoidWorldGenBuilder;
+import com.chunkvault.state.AreaEtaTracker;
 import com.chunkvault.state.AreaPlan;
 import com.chunkvault.state.AutoRecord;
 import com.chunkvault.state.LastInteraction;
@@ -76,41 +77,34 @@ public class ChunkVaultClient implements ClientModInitializer {
         }
         if (openMapKey.isDefault()) {
             var win = Minecraft.getInstance().getWindow();
-            if (openMapKey.matches(event) && InputConstants.isKeyDown(win, InputConstants.KEY_C)) {
-                return true;
-            }
-            return InputConstants.getKey(event).getValue() == InputConstants.KEY_C
-                    && InputConstants.isKeyDown(win, InputConstants.KEY_V);
+            return (event.key() == InputConstants.KEY_V && InputConstants.isKeyDown(win, InputConstants.KEY_C))
+                    || (event.key() == InputConstants.KEY_C && InputConstants.isKeyDown(win, InputConstants.KEY_V));
         }
         return openMapKey.matches(event);
     }
 
-    private static boolean matchesKey(KeyMapping mapping, KeyEvent event) {
-        return mapping != null && !mapping.isUnbound() && mapping.matches(event);
+    public static boolean matchesToggleRecord(KeyEvent event) {
+        return toggleRecordKey != null && !toggleRecordKey.isUnbound() && toggleRecordKey.matches(event);
     }
 
     public static boolean matchesOpenChests(KeyEvent event) {
-        return matchesKey(openChestsKey, event);
+        return openChestsKey != null && !openChestsKey.isUnbound() && openChestsKey.matches(event);
     }
 
     public static boolean matchesOpenProjects(KeyEvent event) {
-        return matchesKey(openProjectsKey, event);
+        return openProjectsKey != null && !openProjectsKey.isUnbound() && openProjectsKey.matches(event);
     }
 
     public static boolean matchesAreaCoords(KeyEvent event) {
-        return matchesKey(areaCoordsKey, event);
-    }
-
-    public static boolean matchesOpenSettings(KeyEvent event) {
-        return matchesKey(openSettingsKey, event);
-    }
-
-    public static boolean matchesToggleRecord(KeyEvent event) {
-        return matchesKey(toggleRecordKey, event);
+        return areaCoordsKey != null && !areaCoordsKey.isUnbound() && areaCoordsKey.matches(event);
     }
 
     public static boolean matchesToggleHud(KeyEvent event) {
-        return matchesKey(toggleHudKey, event);
+        return toggleHudKey != null && !toggleHudKey.isUnbound() && toggleHudKey.matches(event);
+    }
+
+    public static boolean matchesOpenSettings(KeyEvent event) {
+        return openSettingsKey != null && !openSettingsKey.isUnbound() && openSettingsKey.matches(event);
     }
 
     @Override
@@ -172,6 +166,7 @@ public class ChunkVaultClient implements ClientModInitializer {
 
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
             LastInteraction.clear();
+            AreaEtaTracker.reset();
             if (!RecordingState.get().isActive()) {
                 return;
             }
@@ -183,6 +178,7 @@ public class ChunkVaultClient implements ClientModInitializer {
         });
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            AreaEtaTracker.tickSpeed();
             AutoRecord.tick();
             ProjectMap.tick();
             while (openMapKey.consumeClick()) {
