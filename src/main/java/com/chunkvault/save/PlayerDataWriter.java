@@ -63,28 +63,37 @@ public final class PlayerDataWriter {
         return player;
     }
 
-    public static CompoundTag buildPlayerTag(LocalPlayer localPlayer, ClientLevel level, boolean includeInventory) {
+    public static CompoundTag buildPlayerTag(LocalPlayer localPlayer, ClientLevel level,
+                                             boolean includeInventory, boolean includeEnderChest) {
         CompoundTag tag = buildPlayerTag(
                 localPlayer.getX(), localPlayer.getY(), localPlayer.getZ(),
                 localPlayer.getYRot(), localPlayer.getXRot(),
                 level.dimension().identifier().toString()
         );
-        if (includeInventory) {
+        if (includeInventory || includeEnderChest) {
             try {
                 TagValueOutput output = TagValueOutput.createWithContext(ProblemReporter.DISCARDING, level.registryAccess());
                 localPlayer.saveWithoutId(output);
                 CompoundTag dumped = output.buildResult();
-                Tag inv = dumped.get("Inventory");
-                if (inv != null) {
-                    tag.put("Inventory", inv.copy());
+                if (includeInventory) {
+                    Tag inv = dumped.get("Inventory");
+                    if (inv != null) {
+                        tag.put("Inventory", inv.copy());
+                    }
+                    Tag equip = dumped.get("equipment");
+                    if (equip != null) {
+                        tag.put("equipment", equip.copy());
+                    }
+                    Tag sel = dumped.get("SelectedItemSlot");
+                    if (sel != null) {
+                        tag.put("SelectedItemSlot", sel.copy());
+                    }
                 }
-                Tag equip = dumped.get("equipment");
-                if (equip != null) {
-                    tag.put("equipment", equip.copy());
-                }
-                Tag sel = dumped.get("SelectedItemSlot");
-                if (sel != null) {
-                    tag.put("SelectedItemSlot", sel.copy());
+                if (includeEnderChest) {
+                    Tag ender = dumped.get("EnderItems");
+                    if (ender != null) {
+                        tag.put("EnderItems", ender.copy());
+                    }
                 }
             } catch (Throwable t) {
                 System.err.println("[ChunkVault] Failed to serialize player inventory: " + t);
