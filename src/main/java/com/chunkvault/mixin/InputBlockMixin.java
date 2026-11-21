@@ -16,10 +16,22 @@ public abstract class InputBlockMixin extends ClientInput {
 
     @Inject(method = "tick", at = @At("TAIL"))
     private void chunkvault$blockInputWhenMenuOpen(CallbackInfo ci) {
-        if (UiInputGuard.isBlocking()) {
+        if (UiInputGuard.isFullBlock()) {
             this.keyPresses = Input.EMPTY;
             this.moveVector = Vec2.ZERO;
             KeyMapping.releaseAll();
+            return;
+        }
+        if (UiInputGuard.isShiftBlocked() && this.keyPresses.shift()) {
+            this.keyPresses = new Input(
+                    this.keyPresses.forward(),
+                    this.keyPresses.backward(),
+                    this.keyPresses.left(),
+                    this.keyPresses.right(),
+                    this.keyPresses.jump(),
+                    false,
+                    this.keyPresses.sprint()
+            );
         }
     }
 }
