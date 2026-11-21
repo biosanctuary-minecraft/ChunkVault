@@ -92,6 +92,9 @@ public class ExplorerScreen extends Screen {
         super.init();
         draggingScrollbar = false;
         scanFolders();
+        if (selected >= entries.size()) {
+            selected = -1;
+        }
         int x = (this.width - W) / 2;
         listBottom = Math.max(LIST_TOP + ROW_H * 3, this.height - 140);
         scroll = Math.max(0, Math.min(scroll, maxScroll()));
