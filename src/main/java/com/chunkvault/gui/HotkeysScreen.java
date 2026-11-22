@@ -6,7 +6,6 @@ import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
-import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
@@ -29,6 +28,12 @@ public class HotkeysScreen extends Screen {
     private int listX1;
     private int listY1;
     private int scroll;
+    private int btnY0;
+    private int btnY1;
+    private int resetAllX0;
+    private int resetAllX1;
+    private int backX0;
+    private int backX1;
 
     public HotkeysScreen(Screen parent) {
         super(Lang.c("hotkeys.title"));
@@ -46,14 +51,13 @@ public class HotkeysScreen extends Screen {
         listY1 = this.height - 44;
         clampScroll();
 
-        int btnY = this.height - 30;
+        btnY0 = this.height - 32;
+        btnY1 = btnY0 + 22;
         int half = (panelW - 8) / 2;
-        this.addRenderableWidget(Button.builder(Lang.c("hotkeys.reset_all"), b -> resetAll())
-                .bounds(listX0, btnY, half, 20)
-                .build());
-        this.addRenderableWidget(Button.builder(Lang.c("common.back"), b -> this.onClose())
-                .bounds(listX0 + half + 8, btnY, half, 20)
-                .build());
+        resetAllX0 = listX0;
+        resetAllX1 = listX0 + half;
+        backX0 = resetAllX1 + 8;
+        backX1 = listX1;
     }
 
     private void resetAll() {
@@ -182,6 +186,16 @@ public class HotkeysScreen extends Screen {
             g.fill(trackX0 + 1, thumbY, listX1 - 1, thumbY + thumbH, 0xFF5A6074);
         }
 
+        boolean rHover = mouseX >= resetAllX0 && mouseX < resetAllX1 && mouseY >= btnY0 && mouseY < btnY1;
+        g.fill(resetAllX0, btnY0, resetAllX1, btnY1, rHover ? 0xFFFFFFFF : 0xFF9A3838);
+        g.fill(resetAllX0 + 1, btnY0 + 1, resetAllX1 - 1, btnY1 - 1, rHover ? 0xFF6B2C2C : 0xFF4A2020);
+        g.centeredText(this.font, Lang.s("hotkeys.reset_all"), (resetAllX0 + resetAllX1) / 2, btnY0 + 7, 0xFFFFB0B0);
+
+        boolean bHover = mouseX >= backX0 && mouseX < backX1 && mouseY >= btnY0 && mouseY < btnY1;
+        g.fill(backX0, btnY0, backX1, btnY1, bHover ? 0xFFFFFFFF : 0xFF4A5064);
+        g.fill(backX0 + 1, btnY0 + 1, backX1 - 1, btnY1 - 1, bHover ? 0xFF343A4A : 0xFF1E222C);
+        g.centeredText(this.font, Lang.s("common.back"), (backX0 + backX1) / 2, btnY0 + 7, 0xFFFFFFFF);
+
         super.extractRenderState(g, mouseX, mouseY, partialTick);
     }
 
@@ -213,6 +227,19 @@ public class HotkeysScreen extends Screen {
 
         double mx = event.x();
         double my = event.y();
+
+        if (event.button() == InputConstants.MOUSE_BUTTON_LEFT && my >= btnY0 && my < btnY1) {
+            if (mx >= resetAllX0 && mx < resetAllX1) {
+                UiSound.click();
+                resetAll();
+                return true;
+            }
+            if (mx >= backX0 && mx < backX1) {
+                UiSound.click();
+                this.onClose();
+                return true;
+            }
+        }
         int maxS = maxScroll();
         int contentRight = maxS > 0 ? listX1 - 8 : listX1;
 
