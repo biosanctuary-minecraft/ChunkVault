@@ -168,26 +168,32 @@ public class MinimapLayoutScreen extends Screen {
 
         if (my >= btnY0 && my < btnY1) {
             if (mx >= sizeMinusX0 && mx < sizeMinusX1) {
+                UiSound.click();
                 s.stepMinimapSize(-1);
                 return true;
             }
             if (mx >= sizePlusX0 && mx < sizePlusX1) {
+                UiSound.click();
                 s.stepMinimapSize(1);
                 return true;
             }
             if (mx >= zoomMinusX0 && mx < zoomMinusX1) {
+                UiSound.click();
                 s.stepMinimapZoom(-1);
                 return true;
             }
             if (mx >= zoomPlusX0 && mx < zoomPlusX1) {
+                UiSound.click();
                 s.stepMinimapZoom(1);
                 return true;
             }
             if (mx >= resetX0 && mx < resetX1) {
+                UiSound.click();
                 s.resetMinimapLayout();
                 return true;
             }
             if (mx >= doneX0 && mx < doneX1) {
+                UiSound.click();
                 this.onClose();
                 return true;
             }
