@@ -4,6 +4,7 @@ import com.chunkvault.Lang;
 import com.chunkvault.save.ContainerDatabase;
 import com.chunkvault.state.AreaPlan;
 import com.chunkvault.state.ChunkVaultSettings;
+import com.chunkvault.state.ChunkVaultSettings.MinimapHudItem;
 import com.chunkvault.state.MapPinFilter;
 import com.chunkvault.state.RecordingState;
 import com.mojang.blaze3d.platform.NativeImage;
@@ -23,15 +24,24 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.chunk.EmptyLevelChunk;
 import net.minecraft.world.level.chunk.LevelChunk;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Stream;
 
 public final class MinimapOverlay {
 
-    static final int FOOTER_H = 14;
+    static final int LINE_H = 11;
+    static final int BAR_PAD_Y = 3;
     static final int PAD = 8;
+
+    private record HudSegment(String text, int color) {}
 
     private static long frame;
     private static int clipX0;
@@ -50,6 +60,11 @@ public final class MinimapOverlay {
 
     private static final Map<Integer, Identifier> PIN_TEXTURES = new HashMap<>();
     private static boolean pinTexturesOk = true;
+
+    private static volatile String cachedSizeProject = "";
+    private static volatile long cachedSizeBytes = -1L;
+    private static volatile long lastSizeScanMs;
+    private static final AtomicBoolean SIZE_SCANNING = new AtomicBoolean();
 
     private static final class PinTexture extends DynamicTexture {
         PinTexture(String name, int size) {
@@ -73,10 +88,27 @@ public final class MinimapOverlay {
         return PAD + (int) Math.round(Math.max(0.0, Math.min(1.0, rx)) * avail);
     }
 
-    static int resolveY(int screenH, int mapSize, double ry) {
-        int totalH = mapSize + FOOTER_H;
+    static int resolveY(int screenH, int mapSize, int barH, double ry) {
+        int totalH = mapSize + barH;
         int avail = Math.max(0, screenH - totalH - PAD * 2);
         return PAD + (int) Math.round(Math.max(0.0, Math.min(1.0, ry)) * avail);
+    }
+
+    static int currentBarHeight(Font font, int mapSize) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null || mc.level == null) {
+            return 0;
+        }
+        ChunkVaultSettings s = ChunkVaultSettings.get();
+        if (!s.minimapHudEnabled()) {
+            return 0;
+        }
+        List<HudSegment> segments = buildHudSegments(mc, mc.level, mc.player, s);
+        if (segments.isEmpty()) {
+            return 0;
+        }
+        List<List<HudSegment>> lines = wrapSegments(font, segments, Math.max(16, mapSize - 8));
+        return lines.size() * LINE_H + BAR_PAD_Y * 2 - 2;
     }
 
     private static void extract(GuiGraphicsExtractor g, DeltaTracker deltaTracker) {
@@ -85,77 +117,96 @@ public final class MinimapOverlay {
             return;
         }
         ChunkVaultSettings settings = ChunkVaultSettings.get();
-        if (!settings.minimapEnabled() || !ProjectMap.isOpen()) {
+        if (!settings.minimapEnabled()) {
             return;
         }
         int screenW = mc.getWindow().getGuiScaledWidth();
         int screenH = mc.getWindow().getGuiScaledHeight();
         int mapSize = settings.minimapSize();
+        int barH = currentBarHeight(mc.font, mapSize);
         int x0 = resolveX(screenW, mapSize, settings.minimapX());
-        int y0 = resolveY(screenH, mapSize, settings.minimapY());
+        int y0 = resolveY(screenH, mapSize, barH, settings.minimapY());
         float partialTick = deltaTracker.getGameTimeDeltaPartialTick(true);
         renderAt(g, partialTick, x0, y0, mapSize, settings.minimapZoom(), false);
     }
 
-    static void renderAt(GuiGraphicsExtractor g, float partialTick, int x0, int y0,
-                         int mapSize, double scale, boolean previewMode) {
+    static int renderAt(GuiGraphicsExtractor g, float partialTick, int x0, int y0,
+                        int mapSize, double scale, boolean previewMode) {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer player = mc.player;
         ClientLevel level = mc.level;
         if (player == null || level == null) {
-            return;
+            return 0;
         }
 
         frame++;
-        int screenW = mc.getWindow().getGuiScaledWidth();
+        ChunkVaultSettings settings = ChunkVaultSettings.get();
+        Font font = mc.font;
+
+        List<List<HudSegment>> hudLines = List.of();
+        int barH = 0;
+        if (settings.minimapHudEnabled()) {
+            List<HudSegment> segments = buildHudSegments(mc, level, player, settings);
+            if (!segments.isEmpty()) {
+                hudLines = wrapSegments(font, segments, Math.max(16, mapSize - 8));
+                barH = hudLines.size() * LINE_H + BAR_PAD_Y * 2 - 2;
+            }
+        }
+
+        boolean hudAbove = settings.minimapHudAbove() && barH > 0;
+        int totalH = mapSize + barH;
         int x1 = x0 + mapSize;
-        int y1 = y0 + mapSize;
-        int fy1 = y1 + FOOTER_H;
+        int totalY1 = y0 + totalH;
+        int mapY0 = hudAbove ? y0 + barH : y0;
+        int mapY1 = mapY0 + mapSize;
+        int barY0 = hudAbove ? y0 : mapY1;
+        int barY1 = barY0 + barH;
 
         int borderCol = previewMode ? 0xFF38D8FF : 0xFF3A3A48;
-        g.fill(x0 - 1, y0 - 1, x1 + 1, fy1 + 1, borderCol);
-        g.fill(x0, y0, x1, y1, 0xE80B0B0F);
+        g.fill(x0 - 1, y0 - 1, x1 + 1, totalY1 + 1, borderCol);
+        g.fill(x0, mapY0, x1, mapY1, 0xE80B0B0F);
 
+        int screenW = mc.getWindow().getGuiScaledWidth();
         double dev = Math.max(1.0, (double) mc.getWindow().getWidth() / (double) screenW);
         clipX0 = (int) Math.round(x0 * dev);
-        clipY0 = (int) Math.round(y0 * dev);
+        clipY0 = (int) Math.round(mapY0 * dev);
         clipX1 = (int) Math.round(x1 * dev);
-        clipY1 = (int) Math.round(y1 * dev);
+        clipY1 = (int) Math.round(mapY1 * dev);
 
         String dimensionId = level.dimension().identifier().toString();
         var pos = player.getPosition(partialTick);
         double centerX = pos.x();
         double centerZ = pos.z();
         double mapCX = x0 + mapSize / 2.0;
-        double mapCY = y0 + mapSize / 2.0;
+        double mapCY = mapY0 + mapSize / 2.0;
 
         boolean hasProject = ProjectMap.isOpen();
-        Map<Long, MapCache.ChunkColors> cache = ProjectMap.forDimension(dimensionId);
-
-        var manager = RecordingState.get().saveManager();
-        boolean recording = RecordingState.get().isActive() && manager != null;
-        if (!recording) {
-            zoneCount = 0;
-            zoneSide = 0;
-        } else if (frame % 5 == 0 || zoneSide == 0) {
-            updateZone(mc, level, player);
-        }
-
-        MapTextures.beginFrame(frame, dimensionId, cache);
-        boolean useTex = MapTextures.available();
-
-        double half = (mapSize / 2.0) / scale;
-        int minCx = (int) Math.floor((centerX - half) / 16.0);
-        int maxCx = (int) Math.floor((centerX + half) / 16.0);
-        int minCz = (int) Math.floor((centerZ - half) / 16.0);
-        int maxCz = (int) Math.floor((centerZ + half) / 16.0);
-
-        g.enableScissor(x0, y0, x1, y1);
-        float inv = (float) (1.0 / dev);
-        g.pose().pushMatrix();
-        g.pose().scale(inv, inv);
-
         if (hasProject) {
+            Map<Long, MapCache.ChunkColors> cache = ProjectMap.forDimension(dimensionId);
+
+            var manager = RecordingState.get().saveManager();
+            boolean recording = RecordingState.get().isActive() && manager != null;
+            if (!recording) {
+                zoneCount = 0;
+                zoneSide = 0;
+            } else if (frame % 5 == 0 || zoneSide == 0) {
+                updateZone(mc, level, player);
+            }
+
+            MapTextures.beginFrame(frame, dimensionId, cache);
+            boolean useTex = MapTextures.available();
+
+            double half = (mapSize / 2.0) / scale;
+            int minCx = (int) Math.floor((centerX - half) / 16.0);
+            int maxCx = (int) Math.floor((centerX + half) / 16.0);
+            int minCz = (int) Math.floor((centerZ - half) / 16.0);
+            int maxCz = (int) Math.floor((centerZ + half) / 16.0);
+
+            g.enableScissor(x0, mapY0, x1, mapY1);
+            float inv = (float) (1.0 / dev);
+            g.pose().pushMatrix();
+            g.pose().scale(inv, inv);
+
             if (useTex) {
                 drawTerrain(g, dimensionId, cache, mapCX, mapCY, centerX, centerZ, scale, dev, minCx, maxCx, minCz, maxCz);
             } else {
@@ -189,81 +240,300 @@ public final class MinimapOverlay {
                 fillI(g, ix0, iy0, ix0 + t, iy1, 0xEE38D8FF);
                 fillI(g, ix1 - t, iy0, ix1, iy1, 0xEE38D8FF);
             }
-        }
 
-        if (recording && zoneCount > 0) {
-            for (int i = 0; i < zoneCount; i++) {
-                int zx0 = (int) Math.round((mapCX + (zoneX0[i] * 16.0 - centerX) * scale) * dev);
-                int zx1 = (int) Math.round((mapCX + (zoneX1[i] * 16.0 - centerX) * scale) * dev);
-                int zy0 = (int) Math.round((mapCY + (zoneZ[i] * 16.0 - centerZ) * scale) * dev);
-                int zy1 = (int) Math.round((mapCY + ((zoneZ[i] + 1) * 16.0 - centerZ) * scale) * dev);
-                fillI(g, zx0, zy0, zx1, zy1, 0x40FF1A1A);
-            }
-            if (zoneSide > 0) {
-                int t = Math.max(1, (int) Math.round(dev));
-                int borderColor = 0xEEFF4040;
-                for (int iz = 0; iz < zoneSide; iz++) {
-                    int cz = zoneMinZ + iz;
-                    int zy0 = (int) Math.round((mapCY + (cz * 16.0 - centerZ) * scale) * dev);
-                    int zy1 = (int) Math.round((mapCY + ((cz + 1) * 16.0 - centerZ) * scale) * dev);
-                    int rowOff = iz * zoneSide;
-                    for (int ix = 0; ix < zoneSide; ix++) {
-                        if (!zoneGrid[rowOff + ix]) {
-                            continue;
-                        }
-                        int cx = zoneMinX + ix;
-                        int zx0 = (int) Math.round((mapCX + (cx * 16.0 - centerX) * scale) * dev);
-                        int zx1 = (int) Math.round((mapCX + ((cx + 1) * 16.0 - centerX) * scale) * dev);
-                        if (iz == 0 || !zoneGrid[rowOff - zoneSide + ix]) {
-                            fillI(g, zx0, zy0, zx1, zy0 + t, borderColor);
-                        }
-                        if (iz == zoneSide - 1 || !zoneGrid[rowOff + zoneSide + ix]) {
-                            fillI(g, zx0, zy1 - t, zx1, zy1, borderColor);
-                        }
-                        if (ix == 0 || !zoneGrid[rowOff + ix - 1]) {
-                            fillI(g, zx0, zy0, zx0 + t, zy1, borderColor);
-                        }
-                        if (ix == zoneSide - 1 || !zoneGrid[rowOff + ix + 1]) {
-                            fillI(g, zx1 - t, zy0, zx1, zy1, borderColor);
+            if (recording && zoneCount > 0) {
+                for (int i = 0; i < zoneCount; i++) {
+                    int zx0 = (int) Math.round((mapCX + (zoneX0[i] * 16.0 - centerX) * scale) * dev);
+                    int zx1 = (int) Math.round((mapCX + (zoneX1[i] * 16.0 - centerX) * scale) * dev);
+                    int zy0 = (int) Math.round((mapCY + (zoneZ[i] * 16.0 - centerZ) * scale) * dev);
+                    int zy1 = (int) Math.round((mapCY + ((zoneZ[i] + 1) * 16.0 - centerZ) * scale) * dev);
+                    fillI(g, zx0, zy0, zx1, zy1, 0x40FF1A1A);
+                }
+                if (zoneSide > 0) {
+                    int t = Math.max(1, (int) Math.round(dev));
+                    int borderColor = 0xEEFF4040;
+                    for (int iz = 0; iz < zoneSide; iz++) {
+                        int cz = zoneMinZ + iz;
+                        int zy0 = (int) Math.round((mapCY + (cz * 16.0 - centerZ) * scale) * dev);
+                        int zy1 = (int) Math.round((mapCY + ((cz + 1) * 16.0 - centerZ) * scale) * dev);
+                        int rowOff = iz * zoneSide;
+                        for (int ix = 0; ix < zoneSide; ix++) {
+                            if (!zoneGrid[rowOff + ix]) {
+                                continue;
+                            }
+                            int cx = zoneMinX + ix;
+                            int zx0 = (int) Math.round((mapCX + (cx * 16.0 - centerX) * scale) * dev);
+                            int zx1 = (int) Math.round((mapCX + ((cx + 1) * 16.0 - centerX) * scale) * dev);
+                            if (iz == 0 || !zoneGrid[rowOff - zoneSide + ix]) {
+                                fillI(g, zx0, zy0, zx1, zy0 + t, borderColor);
+                            }
+                            if (iz == zoneSide - 1 || !zoneGrid[rowOff + zoneSide + ix]) {
+                                fillI(g, zx0, zy1 - t, zx1, zy1, borderColor);
+                            }
+                            if (ix == 0 || !zoneGrid[rowOff + ix - 1]) {
+                                fillI(g, zx0, zy0, zx0 + t, zy1, borderColor);
+                            }
+                            if (ix == zoneSide - 1 || !zoneGrid[rowOff + ix + 1]) {
+                                fillI(g, zx1 - t, zy0, zx1, zy1, borderColor);
+                            }
                         }
                     }
                 }
             }
-        }
 
-        if (hasProject) {
             drawPins(g, dimensionId, mapCX, mapCY, centerX, centerZ, scale, dev, minCx, maxCx, minCz, maxCz);
+
+            double pcx = mapCX * dev;
+            double pcy = mapCY * dev;
+            double yaw = Math.toRadians(player.getViewYRot(partialTick));
+            drawArrow(g, pcx, pcy, -Math.sin(yaw), Math.cos(yaw), 2.2 * dev + 3.0);
+
+            g.pose().popMatrix();
+            g.disableScissor();
+        } else {
+            g.enableScissor(x0, mapY0, x1, mapY1);
+            String prompt = Lang.s("minimap.open_project");
+            int maxW = Math.max(16, mapSize - 10);
+            if (font.width(prompt) > maxW) {
+                prompt = font.plainSubstrByWidth(prompt, Math.max(8, maxW - 6)) + "…";
+            }
+            g.centeredText(font, prompt, x0 + mapSize / 2, mapY0 + mapSize / 2 - 4, 0xFF9AA4B8);
+            g.disableScissor();
         }
 
-        double pcx = mapCX * dev;
-        double pcy = mapCY * dev;
-        double yaw = Math.toRadians(player.getViewYRot(partialTick));
-        drawArrow(g, pcx, pcy, -Math.sin(yaw), Math.cos(yaw), 2.2 * dev + 3.0);
+        if (barH > 0) {
+            g.fill(x0, barY0, x1, barY1, 0xEB14161C);
+            int sepY = hudAbove ? barY1 - 1 : barY0;
+            g.fill(x0, sepY, x1, sepY + 1, 0xFF2C303D);
 
-        g.pose().popMatrix();
-        g.disableScissor();
-
-        g.fill(x0, y1, x1, fy1, 0xEB14161C);
-        g.fill(x0, y1, x1, y1 + 1, 0xFF2C303D);
-
-        Font font = mc.font;
-        String statusText = recording
-                ? Lang.s("minimap.status.rec", manager.chunksSaved())
-                : Lang.s("minimap.status.off");
-        int statusColor = recording ? 0xFFFF6060 : 0xFF8C94A6;
-        int statusX = x0 + 4;
-        int textY = y1 + 3;
-        int maxStatusW = mapSize - 8;
-        if (font.width(statusText) > maxStatusW) {
-            statusText = recording ? "● REC" : "○ OFF";
+            int maxLineW = Math.max(16, mapSize - 8);
+            String sep = " · ";
+            int sepW = font.width(sep);
+            int ty = barY0 + BAR_PAD_Y;
+            for (List<HudSegment> line : hudLines) {
+                int tx = x0 + 4;
+                for (int i = 0; i < line.size(); i++) {
+                    if (i > 0) {
+                        if (tx + sepW <= x1 - 4) {
+                            g.text(font, sep, tx, ty, 0xFF5A6275, false);
+                            tx += sepW;
+                        }
+                    }
+                    HudSegment seg = line.get(i);
+                    String txt = seg.text();
+                    int rem = (x1 - 4) - tx;
+                    if (rem <= 4) {
+                        break;
+                    }
+                    if (font.width(txt) > rem) {
+                        txt = font.plainSubstrByWidth(txt, Math.max(6, rem - 6)) + "…";
+                    }
+                    g.text(font, txt, tx, ty, seg.color(), true);
+                    tx += font.width(txt);
+                }
+                ty += LINE_H;
+                if (ty > barY1 - 4) {
+                    break;
+                }
+            }
         }
-        g.text(font, statusText, statusX, textY, statusColor, true);
 
-        String coords = (int) Math.floor(centerX) + ", " + (int) Math.floor(centerZ);
-        int coordsW = font.width(coords);
-        if (statusX + font.width(statusText) + 6 + coordsW <= x1 - 4) {
-            g.text(font, coords, x1 - 4 - coordsW, textY, 0xFFCCCCCC, true);
+        return barH;
+    }
+
+    private static List<HudSegment> buildHudSegments(Minecraft mc, ClientLevel level,
+                                                     LocalPlayer player, ChunkVaultSettings s) {
+        List<HudSegment> out = new ArrayList<>();
+        boolean hasProject = ProjectMap.isOpen();
+        var manager = RecordingState.get().saveManager();
+        boolean recording = RecordingState.get().isActive() && manager != null;
+        String dimId = level.dimension().identifier().toString();
+
+        if (s.isMinimapHudItemEnabled(MinimapHudItem.STATUS)) {
+            if (recording) {
+                out.add(new HudSegment("● REC", 0xFFFF6060));
+            } else {
+                out.add(new HudSegment("○ OFF", 0xFF8C94A6));
+            }
         }
+        if (s.isMinimapHudItemEnabled(MinimapHudItem.CHUNKS)) {
+            int count = recording ? manager.chunksSaved()
+                    : (hasProject ? ProjectMap.forDimension(dimId).size() : 0);
+            out.add(new HudSegment(formatCompact(count) + " " + Lang.s("minimap.hud.short.chunks"), 0xFFE6ECF5));
+        }
+        if (s.isMinimapHudItemEnabled(MinimapHudItem.COORDS)) {
+            int px = (int) Math.floor(player.getX());
+            int pz = (int) Math.floor(player.getZ());
+            out.add(new HudSegment(px + ", " + pz, 0xFFCCCCCC));
+        }
+        if (s.isMinimapHudItemEnabled(MinimapHudItem.PROJECT)) {
+            String name = hasProject ? ProjectMap.name() : Lang.s("minimap.hud.none");
+            out.add(new HudSegment(name, hasProject ? 0xFFFFD866 : 0xFF707888));
+        }
+        if (s.isMinimapHudItemEnabled(MinimapHudItem.PROJECT_SIZE)) {
+            String sizeStr = hasProject ? queryProjectSize(ProjectMap.name()) : "—";
+            out.add(new HudSegment(sizeStr, 0xFF7CE8A8));
+        }
+        if (s.isMinimapHudItemEnabled(MinimapHudItem.CONTAINERS)) {
+            int c = hasProject ? ContainerDatabase.totalCount() : 0;
+            out.add(new HudSegment(formatCompact(c) + " " + Lang.s("minimap.hud.short.containers"), 0xFFFFB830));
+        }
+        if (s.isMinimapHudItemEnabled(MinimapHudItem.ENTITIES)) {
+            int ent = recording ? manager.entitiesSeen() : 0;
+            out.add(new HudSegment(formatCompact(ent) + " " + Lang.s("minimap.hud.short.entities"), 0xFF66D8FF));
+        }
+        if (s.isMinimapHudItemEnabled(MinimapHudItem.AREA)) {
+            if (hasProject && AreaPlan.isActive()) {
+                int pcx = player.blockPosition().getX() >> 4;
+                int pcz = player.blockPosition().getZ() >> 4;
+                AreaPlan.Progress prog = AreaPlan.computeProgress(pcx, pcz);
+                out.add(new HudSegment(String.format(Locale.ROOT, "%.1f%%", prog.percent()), 0xFF38D8FF));
+            } else {
+                out.add(new HudSegment(Lang.s("minimap.hud.short.area_none"), 0xFF707888));
+            }
+        }
+        if (s.isMinimapHudItemEnabled(MinimapHudItem.DIMENSION)) {
+            out.add(new HudSegment(shortDim(dimId), 0xFFB894FF));
+        }
+        if (s.isMinimapHudItemEnabled(MinimapHudItem.BIOME)) {
+            String biome = level.getBiome(player.blockPosition()).unwrapKey()
+                    .map(k -> prettifyId(k.identifier().getPath()))
+                    .orElse("");
+            if (!biome.isEmpty()) {
+                out.add(new HudSegment(biome, 0xFF9EE09E));
+            }
+        }
+        return out;
+    }
+
+    private static List<List<HudSegment>> wrapSegments(Font font, List<HudSegment> segments, int maxW) {
+        List<List<HudSegment>> lines = new ArrayList<>();
+        int sepW = font.width(" · ");
+        List<HudSegment> cur = new ArrayList<>();
+        int curW = 0;
+        for (HudSegment seg : segments) {
+            int w = font.width(seg.text());
+            if (!cur.isEmpty() && curW + sepW + w > maxW) {
+                lines.add(cur);
+                cur = new ArrayList<>();
+                curW = 0;
+            }
+            if (!cur.isEmpty()) {
+                curW += sepW;
+            }
+            cur.add(seg);
+            curW += w;
+        }
+        if (!cur.isEmpty()) {
+            lines.add(cur);
+        }
+        return lines;
+    }
+
+    private static String queryProjectSize(String projectName) {
+        if (projectName == null || projectName.isEmpty()) {
+            return "—";
+        }
+        long now = System.currentTimeMillis();
+        boolean projChanged = !projectName.equals(cachedSizeProject);
+        if (projChanged) {
+            cachedSizeProject = projectName;
+            cachedSizeBytes = -1L;
+            lastSizeScanMs = 0L;
+        }
+        if ((projChanged || now - lastSizeScanMs >= 10000L) && SIZE_SCANNING.compareAndSet(false, true)) {
+            lastSizeScanMs = now;
+            final String target = projectName;
+            Thread t = new Thread(() -> {
+                try {
+                    Path dir = ProjectMap.root().resolve(target);
+                    long total = 0L;
+                    if (Files.isDirectory(dir)) {
+                        try (Stream<Path> walk = Files.walk(dir)) {
+                            for (Path p : (Iterable<Path>) walk::iterator) {
+                                if (Files.isRegularFile(p)) {
+                                    try {
+                                        total += Files.size(p);
+                                    } catch (Exception ignored) {
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (target.equals(cachedSizeProject)) {
+                        cachedSizeBytes = total;
+                    }
+                } catch (Exception ignored) {
+                } finally {
+                    SIZE_SCANNING.set(false);
+                }
+            }, "chunkvault-size");
+            t.setDaemon(true);
+            t.start();
+        }
+        long bytes = cachedSizeBytes;
+        return bytes < 0L ? "…" : formatBytes(bytes);
+    }
+
+    private static String formatBytes(long bytes) {
+        if (bytes < 1024L) {
+            return bytes + " B";
+        }
+        double kb = bytes / 1024.0;
+        if (kb < 1024.0) {
+            return kb < 100.0 ? String.format(Locale.ROOT, "%.1f KB", kb) : ((long) Math.round(kb)) + " KB";
+        }
+        double mb = kb / 1024.0;
+        if (mb < 1024.0) {
+            return mb < 100.0 ? String.format(Locale.ROOT, "%.1f MB", mb) : ((long) Math.round(mb)) + " MB";
+        }
+        double gb = mb / 1024.0;
+        return String.format(Locale.ROOT, "%.2f GB", gb);
+    }
+
+    private static String formatCompact(int n) {
+        if (n >= 1_000_000) {
+            return String.format(Locale.ROOT, "%.1fM", n / 1_000_000.0);
+        }
+        if (n >= 10_000) {
+            return String.format(Locale.ROOT, "%.1fk", n / 1_000.0);
+        }
+        return Integer.toString(n);
+    }
+
+    private static String shortDim(String dimId) {
+        if ("minecraft:overworld".equals(dimId)) {
+            return "Overworld";
+        }
+        if ("minecraft:the_nether".equals(dimId)) {
+            return "Nether";
+        }
+        if ("minecraft:the_end".equals(dimId)) {
+            return "End";
+        }
+        int colon = dimId.indexOf(':');
+        return prettifyId(colon >= 0 ? dimId.substring(colon + 1) : dimId);
+    }
+
+    private static String prettifyId(String raw) {
+        if (raw == null || raw.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder(raw.length());
+        boolean cap = true;
+        for (int i = 0; i < raw.length(); i++) {
+            char c = raw.charAt(i);
+            if (c == '_' || c == '-') {
+                sb.append(' ');
+                cap = true;
+            } else if (cap) {
+                sb.append(Character.toUpperCase(c));
+                cap = false;
+            } else {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
     }
 
     private static void drawTerrain(GuiGraphicsExtractor g, String dimensionId,
