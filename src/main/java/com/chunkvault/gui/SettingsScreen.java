@@ -8,7 +8,6 @@ import com.chunkvault.state.ChunkVaultSettings;
 import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
-import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
@@ -41,6 +40,8 @@ public class SettingsScreen extends Screen {
     private int scroll;
     private boolean draggingScrollbar;
     private double scrollDragOffset;
+    private int doneY0;
+    private int doneY1;
 
     public SettingsScreen() {
         this(null);
@@ -69,9 +70,8 @@ public class SettingsScreen extends Screen {
         seedBox.setResponder(s -> seedText = s);
         this.addRenderableWidget(seedBox);
 
-        this.addRenderableWidget(Button.builder(Lang.c("common.done"), b -> this.onClose())
-                .bounds(listX0, this.height - 30, panelW, 20)
-                .build());
+        doneY0 = this.height - 32;
+        doneY1 = doneY0 + 22;
     }
 
     private int maxScroll() {
@@ -251,6 +251,11 @@ public class SettingsScreen extends Screen {
             g.fill(trackX0 + 1, thumbTop, listX1 - 1, thumbTop + thumbH, thumbCol);
         }
 
+        boolean doneHover = mouseX >= listX0 && mouseX < listX1 && mouseY >= doneY0 && mouseY < doneY1;
+        g.fill(listX0, doneY0, listX1, doneY1, doneHover ? 0xFFFFFFFF : 0xFF50C878);
+        g.fill(listX0 + 1, doneY0 + 1, listX1 - 1, doneY1 - 1, doneHover ? 0xFF2D6B48 : 0xFF1F5236);
+        g.centeredText(this.font, Lang.s("common.done"), (listX0 + listX1) / 2, doneY0 + 7, 0xFF90FFB0);
+
         super.extractRenderState(g, mouseX, mouseY, partialTick);
     }
 
@@ -407,6 +412,13 @@ public class SettingsScreen extends Screen {
         int maxS = maxScroll();
         int contentRight = maxS > 0 ? listX1 - SCROLLBAR_W - 2 : listX1;
         int btn = event.button();
+
+        if (btn == InputConstants.MOUSE_BUTTON_LEFT
+                && mx >= listX0 && mx < listX1 && my >= doneY0 && my < doneY1) {
+            UiSound.click();
+            this.onClose();
+            return true;
+        }
 
         if (btn == InputConstants.MOUSE_BUTTON_LEFT && maxS > 0
                 && mx >= listX1 - SCROLLBAR_W - 2 && mx <= listX1 + 2 && my >= listY0 && my < listY1) {
