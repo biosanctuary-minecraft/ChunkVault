@@ -5,7 +5,7 @@ import com.chunkvault.save.ContainerContentReader;
 import com.chunkvault.save.ContainerDatabase;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
-import net.minecraft.client.gui.components.Button;
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.world.item.ItemStack;
@@ -52,6 +52,15 @@ public class ContainerViewerScreen extends Screen {
 
     private String status = "";
     private long statusUntil;
+
+    private int btnY0;
+    private int btnY1;
+    private int parentBtnX0;
+    private int parentBtnX1;
+    private int copyBtnX0;
+    private int copyBtnX1;
+    private int backBtnX0;
+    private int backBtnX1;
 
     public ContainerViewerScreen(Screen parent, String dimension, int x, int z, String initialKey) {
         this(parent, dimension, x, z, initialKey, null);
@@ -140,43 +149,46 @@ public class ContainerViewerScreen extends Screen {
         computeGeometry();
         rebuildSlotLayout();
 
-        int btnY = panelY + panelH - 28;
+        updateBottomButtonBounds();
+    }
+
+    private void updateBottomButtonBounds() {
+        btnY0 = panelY + panelH - 29;
+        btnY1 = btnY0 + 21;
         int innerW = mainW - 16;
         int btnX = mainX + 8;
-
         if (nestedShulker != null) {
             int third = (innerW - 12) / 3;
-            this.addRenderableWidget(Button.builder(Lang.c("viewer.back_parent"), b -> exitNestedShulker())
-                    .bounds(btnX, btnY, third, 20)
-                    .build());
-            this.addRenderableWidget(Button.builder(Lang.c("viewer.copy_coords"), b -> copyCoords())
-                    .bounds(btnX + third + 6, btnY, third, 20)
-                    .build());
-            this.addRenderableWidget(Button.builder(Lang.c("common.back"), b -> this.onClose())
-                    .bounds(btnX + (third + 6) * 2, btnY, innerW - (third + 6) * 2, 20)
-                    .build());
+            parentBtnX0 = btnX;
+            parentBtnX1 = btnX + third;
+            copyBtnX0 = parentBtnX1 + 6;
+            copyBtnX1 = copyBtnX0 + third;
+            backBtnX0 = copyBtnX1 + 6;
+            backBtnX1 = btnX + innerW;
         } else {
+            parentBtnX0 = 0;
+            parentBtnX1 = 0;
             int half = (innerW - 6) / 2;
-            this.addRenderableWidget(Button.builder(Lang.c("viewer.copy_coords"), b -> copyCoords())
-                    .bounds(btnX, btnY, half, 20)
-                    .build());
-            this.addRenderableWidget(Button.builder(Lang.c("common.back"), b -> this.onClose())
-                    .bounds(btnX + half + 6, btnY, innerW - half - 6, 20)
-                    .build());
+            copyBtnX0 = btnX;
+            copyBtnX1 = btnX + half;
+            backBtnX0 = copyBtnX1 + 6;
+            backBtnX1 = btnX + innerW;
         }
     }
 
     private void updateNestedButton() {
         if (this.width > 0 && this.height > 0) {
-            this.rebuildWidgets();
+            computeGeometry();
+            updateBottomButtonBounds();
         }
     }
 
     private void exitNestedShulker() {
         nestedShulker = null;
         nestedSlots = null;
+        computeGeometry();
         rebuildSlotLayout();
-        this.rebuildWidgets();
+        updateBottomButtonBounds();
     }
 
     private void copyCoords() {
@@ -487,7 +499,27 @@ public class ContainerViewerScreen extends Screen {
             g.text(this.font, fit(Lang.s("viewer.shulker_hint"), mainW - 16), mainX + 8, panelY + panelH - 40, 0xFFC864FF, true);
         }
 
+        updateBottomButtonBounds();
+        if (nestedShulker != null) {
+            drawStyledButton(g, parentBtnX0, parentBtnX1, btnY0, btnY1, Lang.s("viewer.back_parent"), mouseX, mouseY,
+                    0xFFC864FF, 0xFF3A204A, 0xFF522D68, 0xFFE8C0FF);
+        }
+        drawStyledButton(g, copyBtnX0, copyBtnX1, btnY0, btnY1, Lang.s("viewer.copy_coords"), mouseX, mouseY,
+                0xFF3B6E80, 0xFF1A2E3A, 0xFF284858, 0xFFE0F4FF);
+        drawStyledButton(g, backBtnX0, backBtnX1, btnY0, btnY1, Lang.s("common.back"), mouseX, mouseY,
+                0xFF4A5064, 0xFF1E222C, 0xFF343A4A, 0xFFFFFFFF);
+
         super.extractRenderState(g, mouseX, mouseY, partialTick);
+    }
+
+    private void drawStyledButton(GuiGraphicsExtractor g, int x0, int x1, int y0, int y1,
+                                  String label, int mouseX, int mouseY,
+                                  int border, int bg, int bgHover, int textColor) {
+        boolean hover = mouseX >= x0 && mouseX < x1 && mouseY >= y0 && mouseY < y1;
+        g.fill(x0, y0, x1, y1, hover ? 0xFFFFFFFF : border);
+        g.fill(x0 + 1, y0 + 1, x1 - 1, y1 - 1, hover ? bgHover : bg);
+        int ty = y0 + ((y1 - y0) - 8) / 2;
+        g.centeredText(this.font, fit(label, (x1 - x0) - 8), (x0 + x1) / 2, ty, textColor);
     }
 
     private boolean hasAnyShulker() {
@@ -525,6 +557,25 @@ public class ContainerViewerScreen extends Screen {
 
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean isDoubleClick) {
+        if (event.button() == InputConstants.MOUSE_BUTTON_LEFT && event.y() >= btnY0 && event.y() < btnY1) {
+            double mx = event.x();
+            if (nestedShulker != null && mx >= parentBtnX0 && mx < parentBtnX1) {
+                UiSound.click();
+                exitNestedShulker();
+                return true;
+            }
+            if (mx >= copyBtnX0 && mx < copyBtnX1) {
+                UiSound.click();
+                copyCoords();
+                return true;
+            }
+            if (mx >= backBtnX0 && mx < backBtnX1) {
+                UiSound.click();
+                this.onClose();
+                return true;
+            }
+        }
+
         if (hasSidebar() && event.button() == 0) {
             boolean hasScroll = hasScrollbar();
             int contentRight = hasScroll ? listX + SIDEBAR_W - SCROLLBAR_W - SCROLLBAR_PAD * 2 : listX + SIDEBAR_W;
@@ -549,10 +600,12 @@ public class ContainerViewerScreen extends Screen {
                 int idx = scroll + row;
                 if (row >= 0 && row < visibleRows() && idx >= 0 && idx < stackEntries.size()) {
                     if (idx != selectedIndex) {
+                        UiSound.click();
                         selectedIndex = idx;
                         reloadCurrent();
                         computeGeometry();
                         rebuildSlotLayout();
+                        updateBottomButtonBounds();
                     }
                 }
                 return true;
@@ -565,11 +618,12 @@ public class ContainerViewerScreen extends Screen {
                 if (event.x() >= slot.x() && event.x() < slot.x() + SLOT_SIZE
                         && event.y() >= slot.y() && event.y() < slot.y() + SLOT_SIZE) {
                     if (ContainerContentReader.isShulkerStack(slot.stack())) {
+                        UiSound.click();
                         nestedShulker = slot.stack();
                         nestedSlots = ContainerContentReader.decodeNestedShulker(slot.stack());
                         computeGeometry();
                         rebuildSlotLayout();
-                        this.rebuildWidgets();
+                        updateBottomButtonBounds();
                         return true;
                     }
                 }
