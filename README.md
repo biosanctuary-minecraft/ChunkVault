@@ -2,7 +2,8 @@
 
 **ChunkVault records the world you explore on a multiplayer server into a normal singleplayer save.** Walk around, open chests, track your progress on a live minimap, plan your scan area, search saved storage, and play the result later — with or without the mod installed.
 
-&lt;img width=&quot;1280&quot; height=&quot;720&quot; alt=&quot;photo_2026-11-20_22-16-41&quot; src=&quot;https://www.google.com/search?q=https://github.com/user-attachments/assets/4463d06c-e1ee-4297-8127-b97cf0e865bd&quot; /&gt;
+<img width="1920" height="1080" alt="изображение" src="https://github.com/user-attachments/assets/7112b91b-d00f-4288-9046-b8fbaee7a2d4" />
+
 
 ## Features
 
