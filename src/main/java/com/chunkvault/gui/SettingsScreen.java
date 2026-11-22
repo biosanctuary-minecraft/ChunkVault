@@ -13,15 +13,12 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 
-import java.util.Locale;
-
 public class SettingsScreen extends Screen {
 
     private static final int ROW_H = 28;
-    private static final int ROW_COUNT = 14;
+    private static final int ROW_COUNT = 11;
     private static final int PANEL_MAX_W = 460;
     private static final int BADGE_W = 96;
-    private static final int STEP_BTN_W = 18;
     private static final int FILTER_W = 72;
     private static final int SEED_W = 162;
     private static final int SCROLLBAR_W = 8;
@@ -121,16 +118,6 @@ public class SettingsScreen extends Screen {
         }
     }
 
-    private static String formatZoom(double z) {
-        if (Math.abs(z - Math.rint(z)) < 0.001) {
-            return ((int) Math.rint(z)) + "x";
-        }
-        if (Math.abs(z * 10.0 - Math.rint(z * 10.0)) < 0.001) {
-            return String.format(Locale.ROOT, "%.1fx", z);
-        }
-        return String.format(Locale.ROOT, "%.2fx", z);
-    }
-
     @Override
     public boolean keyPressed(KeyEvent event) {
         if (System.currentTimeMillis() - openedAtMs >= 180L
@@ -212,29 +199,11 @@ public class SettingsScreen extends Screen {
 
         drawSeedRow(g, 8, contentRight, mouseX, mouseY, s.useSeed());
 
-        drawToggleRow(g, 9, contentRight, mouseX, mouseY, 0xFF38D8FF,
-                Lang.s("settings.row.minimap"), Lang.s("settings.row.minimap.desc"),
-                s.minimapEnabled() ? Lang.s("common.on") : Lang.s("common.off"), s.minimapEnabled());
+        drawActionRow(g, 9, contentRight, mouseX, mouseY, 0xFF38D8FF,
+                Lang.s("settings.row.minimap"), Lang.s("settings.row.minimap_menu.desc"),
+                Lang.s("settings.row.open_arrow"), true);
 
-        drawActionRow(g, 10, contentRight, mouseX, mouseY, s.minimapEnabled() ? 0xFF2AA8C4 : 0xFF3E4454,
-                Lang.s("settings.row.minimap_pos"), Lang.s("settings.row.minimap_pos.desc"),
-                Lang.s("settings.minimap.edit"), s.minimapEnabled());
-
-        drawStepperRow(g, 11, contentRight, mouseX, mouseY, 0xFF2AA8C4,
-                Lang.s("settings.row.minimap_size"), Lang.s("settings.row.minimap_size.desc"),
-                Lang.s("settings.minimap.size_px", s.minimapSize()),
-                s.minimapEnabled(),
-                s.minimapSize() > ChunkVaultSettings.MINIMAP_MIN_SIZE,
-                s.minimapSize() < ChunkVaultSettings.MINIMAP_MAX_SIZE);
-
-        drawStepperRow(g, 12, contentRight, mouseX, mouseY, 0xFF2AA8C4,
-                Lang.s("settings.row.minimap_zoom"), Lang.s("settings.row.minimap_zoom.desc"),
-                formatZoom(s.minimapZoom()),
-                s.minimapEnabled(),
-                s.minimapZoom() > ChunkVaultSettings.MINIMAP_ZOOMS[0] + 0.001,
-                s.minimapZoom() < ChunkVaultSettings.MINIMAP_ZOOMS[ChunkVaultSettings.MINIMAP_ZOOMS.length - 1] - 0.001);
-
-        drawActionRow(g, 13, contentRight, mouseX, mouseY, 0xFF4A90E2,
+        drawActionRow(g, 10, contentRight, mouseX, mouseY, 0xFF4A90E2,
                 Lang.s("settings.row.hotkeys"), Lang.s("settings.row.hotkeys.desc"),
                 Lang.s("settings.row.open_arrow"), true);
 
@@ -305,46 +274,6 @@ public class SettingsScreen extends Screen {
         int by1 = ry1 - 5;
         boolean hover = mouseX >= bx0 && mouseX < bx1 && mouseY >= Math.max(listY0, by0) && mouseY < Math.min(listY1, by1);
         drawPill(g, bx0, by0, bx1, by1, value, on, true, hover);
-    }
-
-    private void drawStepperRow(GuiGraphicsExtractor g, int idx, int contentRight, int mouseX, int mouseY,
-                                int accent, String title, String desc, String value,
-                                boolean enabled, boolean canMinus, boolean canPlus) {
-        int ry0 = listY0 + idx * ROW_H - scroll;
-        int ry1 = ry0 + ROW_H;
-        if (ry1 <= listY0 || ry0 >= listY1) {
-            return;
-        }
-        int bx1 = contentRight - 6;
-        int bx0 = bx1 - BADGE_W;
-        drawRowBase(g, idx, contentRight, mouseX, mouseY, enabled ? accent : 0xFF3E4454, title, desc, bx0);
-        int by0 = ry0 + 4;
-        int by1 = ry1 - 5;
-        int inY = mouseY >= Math.max(listY0, by0) && mouseY < Math.min(listY1, by1) ? 1 : 0;
-
-        int mX0 = bx0;
-        int mX1 = bx0 + STEP_BTN_W;
-        int pX1 = bx1;
-        int pX0 = bx1 - STEP_BTN_W;
-        int vX0 = mX1 + 2;
-        int vX1 = pX0 - 2;
-
-        boolean mEnabled = enabled && canMinus;
-        boolean pEnabled = enabled && canPlus;
-        boolean mHover = mEnabled && inY == 1 && mouseX >= mX0 && mouseX < mX1;
-        boolean pHover = pEnabled && inY == 1 && mouseX >= pX0 && mouseX < pX1;
-
-        g.fill(mX0, by0, mX1, by1, !mEnabled ? 0xFF282C36 : (mHover ? 0xFFFFFFFF : 0xFF3B6E80));
-        g.fill(mX0 + 1, by0 + 1, mX1 - 1, by1 - 1, !mEnabled ? 0xFF181A22 : (mHover ? 0xFF284858 : 0xFF1A2E3A));
-        g.centeredText(this.font, "-", (mX0 + mX1) / 2, by0 + 5, mEnabled ? 0xFFFFFFFF : 0xFF555B6A);
-
-        g.fill(vX0, by0, vX1, by1, !enabled ? 0xFF282C36 : 0xFF3A3E4C);
-        g.fill(vX0 + 1, by0 + 1, vX1 - 1, by1 - 1, 0xFF141720);
-        g.centeredText(this.font, value, (vX0 + vX1) / 2, by0 + 5, enabled ? 0xFFE0F4FF : 0xFF555B6A);
-
-        g.fill(pX0, by0, pX1, by1, !pEnabled ? 0xFF282C36 : (pHover ? 0xFFFFFFFF : 0xFF3B6E80));
-        g.fill(pX0 + 1, by0 + 1, pX1 - 1, by1 - 1, !pEnabled ? 0xFF181A22 : (pHover ? 0xFF284858 : 0xFF1A2E3A));
-        g.centeredText(this.font, "+", (pX0 + pX1) / 2, by0 + 5, pEnabled ? 0xFFFFFFFF : 0xFF555B6A);
     }
 
     private void drawContainersRow(GuiGraphicsExtractor g, int idx, int contentRight, int mouseX, int mouseY, ChunkVaultSettings s) {
@@ -434,41 +363,14 @@ public class SettingsScreen extends Screen {
             return true;
         }
 
-        if ((btn == InputConstants.MOUSE_BUTTON_LEFT || btn == InputConstants.MOUSE_BUTTON_RIGHT)
+        if (btn == InputConstants.MOUSE_BUTTON_LEFT
                 && mx >= listX0 && mx < contentRight && my >= listY0 && my < listY1) {
             int idx = (int) ((my - listY0 + scroll) / ROW_H);
             ChunkVaultSettings s = ChunkVaultSettings.get();
-            if (idx == 11 || idx == 12) {
-                if (!s.minimapEnabled()) {
-                    return true;
-                }
-                int bx1 = contentRight - 6;
-                int bx0 = bx1 - BADGE_W;
-                int dir;
-                if (btn == InputConstants.MOUSE_BUTTON_RIGHT) {
-                    dir = -1;
-                } else if (mx >= bx0 && mx < bx0 + STEP_BTN_W) {
-                    dir = -1;
-                } else if (mx >= bx1 - STEP_BTN_W && mx < bx1) {
-                    dir = 1;
-                } else {
-                    dir = 1;
-                }
-                UiSound.click();
-                if (idx == 11) {
-                    s.stepMinimapSize(dir);
-                } else {
-                    s.stepMinimapZoom(dir);
-                }
-                return true;
-            }
-            if (btn != InputConstants.MOUSE_BUTTON_LEFT) {
-                return super.mouseClicked(event, isDoubleClick);
-            }
             if (idx == 8) {
                 return super.mouseClicked(event, isDoubleClick);
             }
-            if (idx >= 0 && idx < ROW_COUNT && idx != 8 && (idx != 10 || s.minimapEnabled())) {
+            if (idx >= 0 && idx < ROW_COUNT) {
                 UiSound.click();
             }
             switch (idx) {
@@ -518,17 +420,11 @@ public class SettingsScreen extends Screen {
                     return true;
                 }
                 case 9 -> {
-                    s.setMinimapEnabled(!s.minimapEnabled());
+                    applySeed();
+                    Minecraft.getInstance().setScreenAndShow(new MinimapSettingsScreen(this));
                     return true;
                 }
                 case 10 -> {
-                    if (s.minimapEnabled()) {
-                        applySeed();
-                        Minecraft.getInstance().setScreenAndShow(new MinimapLayoutScreen(this));
-                    }
-                    return true;
-                }
-                case 13 -> {
                     applySeed();
                     Minecraft.getInstance().setScreenAndShow(new HotkeysScreen(this));
                     return true;
