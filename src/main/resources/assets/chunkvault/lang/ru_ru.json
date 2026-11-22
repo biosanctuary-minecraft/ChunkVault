@@ -327,5 +327,9 @@
   "chunkvault.minimap.hud.item.dimension": "HUD: Измерение",
   "chunkvault.minimap.hud.item.dimension.desc": "Название текущего измерения",
   "chunkvault.minimap.hud.item.biome": "HUD: Биом",
-  "chunkvault.minimap.hud.item.biome.desc": "Название текущего биома"
+  "chunkvault.minimap.hud.item.biome.desc": "Название текущего биома",
+  "chunkvault.settings.tab.recording": "Запись",
+  "chunkvault.settings.tab.world": "Мир",
+  "chunkvault.settings.tab.minimap": "Мини-карта",
+  "chunkvault.settings.tab.hotkeys": "Клавиши"
 }
