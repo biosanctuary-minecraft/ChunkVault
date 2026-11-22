@@ -327,5 +327,9 @@
   "chunkvault.minimap.hud.item.dimension": "HUD: Dimension",
   "chunkvault.minimap.hud.item.dimension.desc": "Show current dimension name",
   "chunkvault.minimap.hud.item.biome": "HUD: Biome",
-  "chunkvault.minimap.hud.item.biome.desc": "Show current biome name"
+  "chunkvault.minimap.hud.item.biome.desc": "Show current biome name",
+  "chunkvault.settings.tab.recording": "Recording",
+  "chunkvault.settings.tab.world": "World",
+  "chunkvault.settings.tab.minimap": "Minimap",
+  "chunkvault.settings.tab.hotkeys": "Hotkeys"
 }
