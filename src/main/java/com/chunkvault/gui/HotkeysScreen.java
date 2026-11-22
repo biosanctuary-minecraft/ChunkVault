@@ -232,10 +232,12 @@ public class HotkeysScreen extends Screen {
                 if (my >= btnY0 && my < btnY1) {
                     if (mx >= keyX0 && mx < keyX1) {
                         if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+                            UiSound.click();
                             listening = m;
                             return true;
                         }
                         if (event.button() == InputConstants.MOUSE_BUTTON_RIGHT) {
+                            UiSound.click();
                             m.setKey(m.getDefaultKey());
                             KeyMapping.resetMapping();
                             Minecraft.getInstance().options.save();
@@ -244,6 +246,7 @@ public class HotkeysScreen extends Screen {
                     }
                     if (event.button() == InputConstants.MOUSE_BUTTON_LEFT
                             && mx >= resetX0 && mx < resetX1 && !m.isDefault()) {
+                        UiSound.click();
                         m.setKey(m.getDefaultKey());
                         KeyMapping.resetMapping();
                         Minecraft.getInstance().options.save();
