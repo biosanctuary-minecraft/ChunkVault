@@ -1052,6 +1052,7 @@ public class MapScreen extends Screen {
 
         if (btn == InputConstants.MOUSE_BUTTON_LEFT
                 && mx >= fpResetX0 && mx < fpResetX1 && my >= fpResetY0 && my < fpResetY1) {
+            UiSound.click();
             MapPinFilter.reset();
             if (filterSearchBox != null) {
                 filterSearchBox.setValue("");
@@ -1066,10 +1067,12 @@ public class MapScreen extends Screen {
 
         if (btn == InputConstants.MOUSE_BUTTON_LEFT && my >= fpStatusY0 && my < fpStatusY1) {
             if (mx >= innerX0 && mx < innerX0 + halfW) {
+                UiSound.click();
                 MapPinFilter.toggleShowOpened();
                 return true;
             }
             if (mx >= innerX0 + halfW + 4 && mx < innerX1) {
+                UiSound.click();
                 MapPinFilter.toggleShowUnopened();
                 return true;
             }
@@ -1090,6 +1093,7 @@ public class MapScreen extends Screen {
                     }
                 }
                 if (col >= 0) {
+                    UiSound.click();
                     int idx = row * 3 + col;
                     switch (idx) {
                         case 0 -> MapPinFilter.toggleChests();
@@ -1110,10 +1114,12 @@ public class MapScreen extends Screen {
 
         if (btn == InputConstants.MOUSE_BUTTON_LEFT && my >= fpShulkerBtnY0 && my < fpShulkerBtnY1) {
             if (mx >= fpShulkerAllX0 && mx < fpShulkerAllX1) {
+                UiSound.click();
                 MapPinFilter.setAllShulkerColors(true);
                 return true;
             }
             if (mx >= fpShulkerNoneX0 && mx < fpShulkerNoneX1) {
+                UiSound.click();
                 MapPinFilter.setAllShulkerColors(false);
                 return true;
             }
@@ -1130,6 +1136,7 @@ public class MapScreen extends Screen {
                 int sx0 = innerX0 + col * (swW + swGap);
                 int sy0 = fpSwatchesY0 + row * (swH + 4);
                 if (mx >= sx0 && mx < sx0 + swW && my >= sy0 && my < sy0 + swH) {
+                    UiSound.click();
                     String colorId = colors.get(i).id();
                     if (btn == InputConstants.MOUSE_BUTTON_RIGHT) {
                         MapPinFilter.soloShulkerColor(colorId);
@@ -1767,6 +1774,7 @@ public class MapScreen extends Screen {
 
         if (mx >= zoomInBtnX0 && mx < zoomInBtnX1 && my >= zoomInBtnY0 && my < zoomInBtnY1) {
             if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+                UiSound.click();
                 zoomCenter(1.25);
                 return true;
             }
@@ -1774,6 +1782,7 @@ public class MapScreen extends Screen {
 
         if (mx >= zoomOutBtnX0 && mx < zoomOutBtnX1 && my >= zoomOutBtnY0 && my < zoomOutBtnY1) {
             if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+                UiSound.click();
                 zoomCenter(0.8);
                 return true;
             }
@@ -1781,6 +1790,7 @@ public class MapScreen extends Screen {
 
         if (mx >= followBtnX0 && mx < followBtnX1 && my >= followBtnY0 && my < followBtnY1) {
             if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+                UiSound.click();
                 followPlayer = !followPlayer;
                 if (followPlayer) {
                     recenterOnPlayer();
@@ -1791,6 +1801,7 @@ public class MapScreen extends Screen {
 
         if (filterBtnX1 > filterBtnX0 && mx >= filterBtnX0 && mx < filterBtnX1 && my >= filterBtnY0 && my < filterBtnY1) {
             if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+                UiSound.click();
                 filterPanelOpen = !filterPanelOpen;
                 if (!filterPanelOpen) {
                     unfocusFilterSearch();
@@ -1801,6 +1812,7 @@ public class MapScreen extends Screen {
 
         if (dimBtnX1 > dimBtnX0 && mx >= dimBtnX0 && mx < dimBtnX1 && my >= dimBtnY0 && my < dimBtnY1) {
             if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+                UiSound.click();
                 AreaPlan.toggleDimOutside();
                 return true;
             }
@@ -1808,10 +1820,12 @@ public class MapScreen extends Screen {
 
         if (pinBtnX1 > pinBtnX0 && mx >= pinBtnX0 && mx < pinBtnX1 && my >= pinBtnY0 && my < pinBtnY1) {
             if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+                UiSound.click();
                 showPins = !showPins;
                 return true;
             }
             if (event.button() == InputConstants.MOUSE_BUTTON_RIGHT) {
+                UiSound.click();
                 boolean on = ContainerDatabase.toggleShowUnopened();
                 showToast(Lang.s("db.filter_unopened", on ? Lang.s("common.on") : Lang.s("common.off")));
                 return true;
@@ -1820,6 +1834,7 @@ public class MapScreen extends Screen {
 
         if (event.button() == InputConstants.MOUSE_BUTTON_LEFT && my >= btnY0 && my < btnY1) {
             if (mx >= newX0 && mx < newX1) {
+                UiSound.click();
                 if (recordingBlocks()) {
                     return true;
                 }
@@ -1827,6 +1842,7 @@ public class MapScreen extends Screen {
                 return true;
             }
             if (mx >= expX0 && mx < expX1) {
+                UiSound.click();
                 if (recordingBlocks()) {
                     return true;
                 }
@@ -1834,14 +1850,17 @@ public class MapScreen extends Screen {
                 return true;
             }
             if (btnX1 > btnX0 && mx >= btnX0 && mx < btnX1) {
+                UiSound.click();
                 toggleRecording();
                 return true;
             }
             if (dbX1 > dbX0 && mx >= dbX0 && mx < dbX1) {
+                UiSound.click();
                 Minecraft.getInstance().setScreenAndShow(new ContainerDatabaseScreen(this));
                 return true;
             }
             if (areaX1 > areaX0 && mx >= areaX0 && mx < areaX1) {
+                UiSound.click();
                 trimConfirmUntil = 0;
                 if (!AreaPlan.isActive()) {
                     selectingArea = !selectingArea;
@@ -1857,6 +1876,7 @@ public class MapScreen extends Screen {
                 return true;
             }
             if (mx >= setX0 && mx < setX1) {
+                UiSound.click();
                 Minecraft.getInstance().setScreenAndShow(new SettingsScreen(this));
                 return true;
             }
@@ -1866,10 +1886,12 @@ public class MapScreen extends Screen {
                 && my >= areaBarY0 && my < areaBarY1) {
             if (selectingArea) {
                 if (abCoordsX1 > abCoordsX0 && mx >= abCoordsX0 && mx < abCoordsX1) {
+                    UiSound.click();
                     Minecraft.getInstance().setScreenAndShow(new AreaInputScreen(this));
                     return true;
                 }
                 if (mx >= abClearX0 && mx < abClearX1) {
+                    UiSound.click();
                     selectingArea = false;
                     draggingArea = false;
                     if (!AreaPlan.isActive()) {
@@ -1879,17 +1901,20 @@ public class MapScreen extends Screen {
                 return true;
             }
             if (mx >= abRedrawX0 && mx < abRedrawX1) {
+                UiSound.click();
                 trimConfirmUntil = 0;
                 selectingArea = true;
                 draggingArea = false;
                 return true;
             }
             if (mx >= abClipX0 && mx < abClipX1) {
+                UiSound.click();
                 trimConfirmUntil = 0;
                 AreaPlan.toggleClipToArea();
                 return true;
             }
             if (mx >= abTrimX0 && mx < abTrimX1) {
+                UiSound.click();
                 if (recordingBlocks()) {
                     trimConfirmUntil = 0;
                     return true;
@@ -1909,16 +1934,19 @@ public class MapScreen extends Screen {
                 return true;
             }
             if (mx >= abHudX0 && mx < abHudX1) {
+                UiSound.click();
                 trimConfirmUntil = 0;
                 AreaPlan.toggleHud();
                 return true;
             }
             if (mx >= abAutoX0 && mx < abAutoX1) {
+                UiSound.click();
                 trimConfirmUntil = 0;
                 AreaPlan.toggleAutoStop();
                 return true;
             }
             if (mx >= abClearX0 && mx < abClearX1) {
+                UiSound.click();
                 trimConfirmUntil = 0;
                 AreaPlan.clearPlan();
                 areaPanelOpen = false;
