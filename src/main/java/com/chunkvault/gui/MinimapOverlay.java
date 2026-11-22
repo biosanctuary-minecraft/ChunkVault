@@ -6,6 +6,9 @@ import com.chunkvault.state.AreaPlan;
 import com.chunkvault.state.ChunkVaultSettings;
 import com.chunkvault.state.MapPinFilter;
 import com.chunkvault.state.RecordingState;
+import com.mojang.blaze3d.platform.NativeImage;
+import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.textures.FilterMode;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.DeltaTracker;
@@ -15,11 +18,13 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.chunk.EmptyLevelChunk;
 import net.minecraft.world.level.chunk.LevelChunk;
 
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -34,12 +39,6 @@ public final class MinimapOverlay {
     private static int clipX1;
     private static int clipY1;
 
-    private static boolean camInit;
-    private static double camX;
-    private static double camZ;
-    private static String camDim = "";
-    private static long lastRenderNs;
-
     private static int[] zoneX0 = new int[256];
     private static int[] zoneX1 = new int[256];
     private static int[] zoneZ = new int[256];
@@ -48,6 +47,16 @@ public final class MinimapOverlay {
     private static int zoneMinX;
     private static int zoneMinZ;
     private static int zoneSide;
+
+    private static final Map<Integer, Identifier> PIN_TEXTURES = new HashMap<>();
+    private static boolean pinTexturesOk = true;
+
+    private static final class PinTexture extends DynamicTexture {
+        PinTexture(String name, int size) {
+            super(name, size, size, true);
+            this.sampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
+        }
+    }
 
     private MinimapOverlay() {}
 
@@ -115,27 +124,8 @@ public final class MinimapOverlay {
 
         String dimensionId = level.dimension().identifier().toString();
         var pos = player.getPosition(partialTick);
-        double targetX = pos.x();
-        double targetZ = pos.z();
-
-        long nowNs = System.nanoTime();
-        double dt = lastRenderNs == 0L ? 0.0 : Math.min(0.1, (nowNs - lastRenderNs) * 1.0e-9);
-        lastRenderNs = nowNs;
-
-        if (!camInit || !dimensionId.equals(camDim)
-                || Math.hypot(targetX - camX, targetZ - camZ) > 64.0) {
-            camX = targetX;
-            camZ = targetZ;
-            camDim = dimensionId;
-            camInit = true;
-        } else if (dt > 0.0) {
-            double alpha = 1.0 - Math.exp(-22.0 * dt);
-            camX += (targetX - camX) * alpha;
-            camZ += (targetZ - camZ) * alpha;
-        }
-
-        double centerX = camX;
-        double centerZ = camZ;
+        double centerX = pos.x();
+        double centerZ = pos.z();
         double mapCX = x0 + mapSize / 2.0;
         double mapCY = y0 + mapSize / 2.0;
 
@@ -245,8 +235,8 @@ public final class MinimapOverlay {
             drawPins(g, dimensionId, mapCX, mapCY, centerX, centerZ, scale, dev, minCx, maxCx, minCz, maxCz);
         }
 
-        double pcx = (mapCX + (targetX - centerX) * scale) * dev;
-        double pcy = (mapCY + (targetZ - centerZ) * scale) * dev;
+        double pcx = mapCX * dev;
+        double pcy = mapCY * dev;
         double yaw = Math.toRadians(player.getViewYRot(partialTick));
         drawArrow(g, pcx, pcy, -Math.sin(yaw), Math.cos(yaw), 2.2 * dev + 3.0);
 
@@ -269,7 +259,7 @@ public final class MinimapOverlay {
         }
         g.text(font, statusText, statusX, textY, statusColor, true);
 
-        String coords = (int) Math.floor(targetX) + ", " + (int) Math.floor(targetZ);
+        String coords = (int) Math.floor(centerX) + ", " + (int) Math.floor(centerZ);
         int coordsW = font.width(coords);
         if (statusX + font.width(statusText) + 6 + coordsW <= x1 - 4) {
             g.text(font, coords, x1 - 4 - coordsW, textY, 0xFFCCCCCC, true);
@@ -302,7 +292,7 @@ public final class MinimapOverlay {
                 if (!regionKeys.contains(MapCache.key(rx, rz))) {
                     continue;
                 }
-                MapTextures.Lod lod = MapTextures.acquire(dimensionId, rx, rz, lodIdx, cache, frame);
+                MapTextures.Lod lod = MapTextures.acquire(dimensionId, rx, rz, lodIdx, cache, frame, true);
                 if (lod == null) {
                     continue;
                 }
@@ -315,6 +305,47 @@ public final class MinimapOverlay {
         g.pose().popMatrix();
     }
 
+    private static Identifier pinTextureFor(int color) {
+        if (!pinTexturesOk) {
+            return null;
+        }
+        int key = color | 0xFF000000;
+        Identifier existing = PIN_TEXTURES.get(key);
+        if (existing != null) {
+            return existing;
+        }
+        try {
+            PinTexture tex = new PinTexture("chunkvault_pin_" + Integer.toHexString(key), 16);
+            NativeImage img = tex.getPixels();
+            if (img == null) {
+                tex.close();
+                pinTexturesOk = false;
+                return null;
+            }
+            for (int y = 0; y < 16; y++) {
+                for (int x = 0; x < 16; x++) {
+                    int px;
+                    if (x < 2 || x > 13 || y < 2 || y > 13) {
+                        px = 0x00000000;
+                    } else if (x < 4 || x > 11 || y < 4 || y > 11) {
+                        px = 0xD8000000;
+                    } else {
+                        px = key;
+                    }
+                    img.setPixel(x, y, px);
+                }
+            }
+            tex.upload();
+            Identifier id = Identifier.fromNamespaceAndPath("chunkvault", "pin/" + Integer.toHexString(key));
+            Minecraft.getInstance().getTextureManager().register(id, tex);
+            PIN_TEXTURES.put(key, id);
+            return id;
+        } catch (Throwable t) {
+            pinTexturesOk = false;
+            return null;
+        }
+    }
+
     private static void drawPins(GuiGraphicsExtractor g, String dimensionId,
                                  double mapCX, double mapCY, double centerX, double centerZ,
                                  double scale, double dev, int minCx, int maxCx, int minCz, int maxCz) {
@@ -322,9 +353,10 @@ public final class MinimapOverlay {
         if (visible.isEmpty()) {
             return;
         }
+        float pinScale = (float) Math.max(0.35, 0.4 * dev);
+        int pad = (int) Math.ceil(9.0 * pinScale) + 2;
         int r = Math.max(1, (int) Math.round(1.6 * dev));
         int o = Math.max(1, (int) Math.round(0.8 * dev));
-        int pad = r + o + 2;
         for (ContainerDatabase.ContainerEntry e : visible) {
             if (ContainerDatabase.isSecondaryHalf(e) || !MapPinFilter.matches(e)) {
                 continue;
@@ -334,10 +366,17 @@ public final class MinimapOverlay {
             if (sx < clipX0 - pad || sx > clipX1 + pad || sy < clipY0 - pad || sy > clipY1 + pad) {
                 continue;
             }
+            int col = ContainerDatabase.colorFor(e);
+            Identifier pinId = pinTextureFor(col);
             g.pose().pushMatrix();
             g.pose().translate((float) sx, (float) sy);
-            g.fill(-r - o, -r - o, r + o, r + o, 0xD0000000);
-            g.fill(-r, -r, r, r, ContainerDatabase.colorFor(e));
+            if (pinId != null) {
+                g.pose().scale(pinScale, pinScale);
+                g.blit(RenderPipelines.GUI_TEXTURED, pinId, -8, -8, 0, 0, 16, 16, 16, 16, 16, 16);
+            } else {
+                g.fill(-r - o, -r - o, r + o, r + o, 0xD0000000);
+                g.fill(-r, -r, r, r, col);
+            }
             g.pose().popMatrix();
         }
     }
