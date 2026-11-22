@@ -1,5 +1,7 @@
 package com.chunkvault.save;
 
+import com.chunkvault.gui.MapCache;
+import com.chunkvault.gui.ProjectMap;
 import com.chunkvault.state.AreaPlan;
 import com.chunkvault.state.ChunkVaultSettings;
 import net.minecraft.SharedConstants;
@@ -9,23 +11,27 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.IntArrayTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtIo;
+import net.minecraft.nbt.Tag;
 import net.minecraft.util.ProblemReporter;
+import net.minecraft.world.Container;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
-import net.minecraft.world.Container;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.storage.TagValueOutput;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -178,6 +184,7 @@ public final class WorldSaveManager {
         }
         String dimensionId = level.dimension().identifier().toString();
         String entitiesFolder = regionFolderFor(level).replaceAll("region$", "entities");
+        Map<Long, MapCache.ChunkColors> projectChunks = ProjectMap.forDimension(dimensionId);
         for (Entity entity : level.entitiesForRendering()) {
             try {
                 if (entity instanceof Player || entity.isPassenger() || entity.isRemoved()
@@ -186,7 +193,12 @@ public final class WorldSaveManager {
                 }
                 int chunkX = (int) Math.floor(entity.getX() / 16.0);
                 int chunkZ = (int) Math.floor(entity.getZ() / 16.0);
-                if (!recordedChunks.contains(dimensionId + ":" + chunkX + "," + chunkZ)) {
+                if (!AreaPlan.allowsChunk(dimensionId, chunkX, chunkZ)) {
+                    continue;
+                }
+                boolean chunkRecorded = recordedChunks.contains(dimensionId + ":" + chunkX + "," + chunkZ)
+                        || projectChunks.containsKey(MapCache.key(chunkX, chunkZ));
+                if (!chunkRecorded) {
                     continue;
                 }
                 TagValueOutput output = TagValueOutput.createWithContext(ProblemReporter.DISCARDING, level.registryAccess());
@@ -198,9 +210,24 @@ public final class WorldSaveManager {
         }
     }
 
+    private static String entityUuidKey(CompoundTag tag) {
+        if (tag.get("UUID") instanceof IntArrayTag arr) {
+            int[] vals = arr.getAsIntArray();
+            if (vals.length == 4) {
+                return vals[0] + ":" + vals[1] + ":" + vals[2] + ":" + vals[3];
+            }
+        }
+        return null;
+    }
+
     private void flushEntities() {
         Map<String, List<EntityRecord>> byChunk = new HashMap<>();
+        Set<String> updatedGlobalUuids = new HashSet<>();
         for (EntityRecord record : entityRecords.values()) {
+            String key = entityUuidKey(record.tag());
+            if (key != null) {
+                updatedGlobalUuids.add(key);
+            }
             byChunk.computeIfAbsent(record.entitiesFolder() + "|" + record.chunkX() + "|" + record.chunkZ(),
                     k -> new ArrayList<>()).add(record);
         }
@@ -208,22 +235,53 @@ public final class WorldSaveManager {
         for (List<EntityRecord> group : byChunk.values()) {
             try {
                 EntityRecord first = group.get(0);
+                int regionX = Math.floorDiv(first.chunkX(), 32);
+                int regionZ = Math.floorDiv(first.chunkZ(), 32);
+                int localX = Math.floorMod(first.chunkX(), 32);
+                int localZ = Math.floorMod(first.chunkZ(), 32);
+                SimpleRegionFile region = openRegion(first.entitiesFolder(), regionX, regionZ);
+
+                Set<String> chunkUuids = new HashSet<>();
+                ListTag list = new ListTag();
+                for (EntityRecord record : group) {
+                    String uuidKey = entityUuidKey(record.tag());
+                    if (uuidKey != null) {
+                        chunkUuids.add(uuidKey);
+                    }
+                    list.add(record.tag());
+                }
+
+                byte[] existingBytes = region.readChunk(localX, localZ);
+                if (existingBytes != null) {
+                    try {
+                        CompoundTag existingRoot = NbtIo.read(new DataInputStream(new ByteArrayInputStream(existingBytes)));
+                        ListTag oldList = existingRoot.getList("Entities").orElse(null);
+                        if (oldList != null) {
+                            for (Tag entry : oldList) {
+                                if (entry instanceof CompoundTag oldTag) {
+                                    String oldUuid = entityUuidKey(oldTag);
+                                    if (oldUuid != null && (chunkUuids.contains(oldUuid) || updatedGlobalUuids.contains(oldUuid))) {
+                                        continue;
+                                    }
+                                    if (oldUuid != null) {
+                                        chunkUuids.add(oldUuid);
+                                    }
+                                    list.add(oldTag);
+                                }
+                            }
+                        }
+                    } catch (Exception ignored) {
+                    }
+                }
+
                 CompoundTag root = new CompoundTag();
                 root.putInt("DataVersion", dataVersion);
                 root.put("Position", new IntArrayTag(new int[]{first.chunkX(), first.chunkZ()}));
-                ListTag list = new ListTag();
-                for (EntityRecord record : group) {
-                    list.add(record.tag());
-                }
                 root.put("Entities", list);
 
                 ByteArrayOutputStream bytes = new ByteArrayOutputStream();
                 NbtIo.write(root, new DataOutputStream(bytes));
-
-                int regionX = Math.floorDiv(first.chunkX(), 32);
-                int regionZ = Math.floorDiv(first.chunkZ(), 32);
-                SimpleRegionFile region = openRegion(first.entitiesFolder(), regionX, regionZ);
-                region.writeChunk(Math.floorMod(first.chunkX(), 32), Math.floorMod(first.chunkZ(), 32), bytes.toByteArray());
+                region.writeChunk(localX, localZ, bytes.toByteArray());
             } catch (Exception e) {
                 System.err.println("[ChunkVault] Failed to write entity chunk: " + e);
             }
