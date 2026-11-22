@@ -62,26 +62,27 @@ public class MinimapLayoutScreen extends Screen {
 
         ChunkVaultSettings s = ChunkVaultSettings.get();
         int mapSize = s.minimapSize();
+        int barH = MinimapOverlay.currentBarHeight(this.font, mapSize);
         int x0 = MinimapOverlay.resolveX(this.width, mapSize, s.minimapX());
-        int y0 = MinimapOverlay.resolveY(this.height, mapSize, s.minimapY());
+        int y0 = MinimapOverlay.resolveY(this.height, mapSize, barH, s.minimapY());
         int x1 = x0 + mapSize;
-        int fy1 = y0 + mapSize + MinimapOverlay.FOOTER_H;
+        int totalY1 = y0 + mapSize + barH;
 
         MinimapOverlay.renderAt(g, partialTick, x0, y0, mapSize, s.minimapZoom(), true);
 
         int handleSize = 8;
         boolean overHandle = mouseX >= x1 - handleSize && mouseX <= x1 + 2
-                && mouseY >= fy1 - handleSize && mouseY <= fy1 + 2;
+                && mouseY >= totalY1 - handleSize && mouseY <= totalY1 + 2;
         int handleCol = (draggingResize || overHandle) ? 0xFFFFFFFF : 0xFF38D8FF;
-        g.fill(x1 - handleSize, fy1 - 2, x1 + 1, fy1 + 1, handleCol);
-        g.fill(x1 - 2, fy1 - handleSize, x1 + 1, fy1 + 1, handleCol);
+        g.fill(x1 - handleSize, totalY1 - 2, x1 + 1, totalY1 + 1, handleCol);
+        g.fill(x1 - 2, totalY1 - handleSize, x1 + 1, totalY1 + 1, handleCol);
 
         int barW = Math.min(this.width - 16, 390);
-        int barH = 40;
+        int barHPanel = 40;
         barX0 = (this.width - barW) / 2;
         barX1 = barX0 + barW;
         barY1 = this.height - 12;
-        barY0 = barY1 - barH;
+        barY0 = barY1 - barHPanel;
 
         g.fill(barX0 - 1, barY0 - 1, barX1 + 1, barY1 + 1, 0xFF3A3A48);
         g.fill(barX0, barY0, barX1, barY1, 0xEB14161C);
@@ -204,12 +205,13 @@ public class MinimapLayoutScreen extends Screen {
         }
 
         int mapSize = s.minimapSize();
+        int barH = MinimapOverlay.currentBarHeight(this.font, mapSize);
         int x0 = MinimapOverlay.resolveX(this.width, mapSize, s.minimapX());
-        int y0 = MinimapOverlay.resolveY(this.height, mapSize, s.minimapY());
+        int y0 = MinimapOverlay.resolveY(this.height, mapSize, barH, s.minimapY());
         int x1 = x0 + mapSize;
-        int fy1 = y0 + mapSize + MinimapOverlay.FOOTER_H;
+        int totalY1 = y0 + mapSize + barH;
 
-        if (mx >= x1 - 10 && mx <= x1 + 4 && my >= fy1 - 10 && my <= fy1 + 4) {
+        if (mx >= x1 - 10 && mx <= x1 + 4 && my >= totalY1 - 10 && my <= totalY1 + 4) {
             draggingResize = true;
             resizeStartSize = mapSize;
             resizeStartX = mx;
@@ -217,7 +219,7 @@ public class MinimapLayoutScreen extends Screen {
             return true;
         }
 
-        if (mx >= x0 - 2 && mx <= x1 + 2 && my >= y0 - 2 && my <= fy1 + 2) {
+        if (mx >= x0 - 2 && mx <= x1 + 2 && my >= y0 - 2 && my <= totalY1 + 2) {
             draggingMove = true;
             dragOffX = mx - x0;
             dragOffY = my - y0;
@@ -238,7 +240,8 @@ public class MinimapLayoutScreen extends Screen {
             }
             if (draggingMove) {
                 int mapSize = s.minimapSize();
-                int totalH = mapSize + MinimapOverlay.FOOTER_H;
+                int barH = MinimapOverlay.currentBarHeight(this.font, mapSize);
+                int totalH = mapSize + barH;
                 int availW = Math.max(1, this.width - mapSize - MinimapOverlay.PAD * 2);
                 int availH = Math.max(1, this.height - totalH - MinimapOverlay.PAD * 2);
                 double nx = (event.x() - dragOffX - MinimapOverlay.PAD) / availW;
