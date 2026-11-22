@@ -617,22 +617,26 @@ public class ContainerDatabaseScreen extends Screen {
                 && my >= fY0 && my < fY1) {
             int dir = btn == InputConstants.MOUSE_BUTTON_RIGHT ? -1 : 1;
             if (mx >= dimX0 && mx < dimX1) {
+                UiSound.click();
                 allDimensions = !allDimensions;
                 rebuildFilter();
                 return true;
             }
             if (mx >= catX0 && mx < catX1) {
+                UiSound.click();
                 catIndex = (catIndex + dir + CATEGORIES.length) % CATEGORIES.length;
                 rebuildFilter();
                 return true;
             }
             if (mx >= statusX0 && mx < statusX1) {
+                UiSound.click();
                 statusFilter = statusFilter.step(dir);
                 ContainerDatabase.setShowUnopened(statusFilter != StatusFilter.OPENED);
                 rebuildFilter();
                 return true;
             }
             if (mx >= sortX0 && mx < sortX1) {
+                UiSound.click();
                 sortMode = sortMode.step(dir);
                 rebuildFilter();
                 return true;
@@ -641,14 +645,21 @@ public class ContainerDatabaseScreen extends Screen {
 
         if (btn == InputConstants.MOUSE_BUTTON_LEFT && my >= bY0 && my < bY1) {
             if (mx >= openX0 && mx < openX1) {
+                if (selected >= 0 && selected < rows.size()) {
+                    UiSound.click();
+                }
                 openSelected();
                 return true;
             }
             if (mx >= mapX0 && mx < mapX1) {
+                if (selected >= 0 && selected < rows.size()) {
+                    UiSound.click();
+                }
                 showSelectedOnMap();
                 return true;
             }
             if (mx >= backX0 && mx < backX1) {
+                UiSound.click();
                 this.onClose();
                 return true;
             }
