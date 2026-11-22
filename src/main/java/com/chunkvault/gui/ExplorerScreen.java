@@ -594,11 +594,13 @@ public class ExplorerScreen extends Screen {
         if (btn == InputConstants.MOUSE_BUTTON_LEFT) {
             if (my >= r1Y0 && my < r1Y1) {
                 if (mx >= openX0 && mx < openX1) {
+                    UiSound.click();
                     deleteConfirmUntil = 0L;
                     openSelected();
                     return true;
                 }
                 if (mx >= delX0 && mx < delX1) {
+                    UiSound.click();
                     deleteSelected();
                     return true;
                 }
@@ -606,15 +608,18 @@ public class ExplorerScreen extends Screen {
             if (my >= r2Y0 && my < r2Y1) {
                 deleteConfirmUntil = 0L;
                 if (mx >= copyX0 && mx < copyX1) {
+                    UiSound.click();
                     copySelected();
                     return true;
                 }
                 if (mx >= folderX0 && mx < folderX1) {
+                    UiSound.click();
                     openFolder();
                     return true;
                 }
             }
             if (my >= r3Y0 && my < r3Y1 && mx >= backX0 && mx < backX1) {
+                UiSound.click();
                 deleteConfirmUntil = 0L;
                 this.onClose();
                 return true;
