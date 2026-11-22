@@ -1,12 +1,16 @@
 package com.chunkvault.save;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.RandomAccessFile;
 import java.nio.file.Path;
 import java.util.BitSet;
 import java.util.zip.Deflater;
 import java.util.zip.DeflaterOutputStream;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.InflaterInputStream;
 
 public final class SimpleRegionFile implements AutoCloseable {
 
@@ -51,6 +55,46 @@ public final class SimpleRegionFile implements AutoCloseable {
                 return freeStart;
             }
             runStart = nextUsed + 1;
+        }
+    }
+
+    public synchronized byte[] readChunk(int localX, int localZ) throws IOException {
+        int index = localZ * 32 + localX;
+        int packed = offsets[index];
+        if (packed == 0) {
+            return null;
+        }
+        int offset = packed >>> 8;
+        int count = packed & 0xFF;
+        if (offset < HEADER_SECTORS || count == 0) {
+            return null;
+        }
+        long bytePos = (long) offset * SECTOR_BYTES;
+        if (bytePos + 5 > raf.length()) {
+            return null;
+        }
+        raf.seek(bytePos);
+        int totalLen = raf.readInt();
+        if (totalLen <= 1 || totalLen > count * SECTOR_BYTES) {
+            return null;
+        }
+        int compression = raf.readByte() & 0xFF;
+        byte[] compressed = new byte[totalLen - 1];
+        raf.readFully(compressed);
+        if (compression == 3) {
+            return compressed;
+        }
+        InputStream raw = new ByteArrayInputStream(compressed);
+        InputStream in;
+        if (compression == 1) {
+            in = new GZIPInputStream(raw);
+        } else if (compression == 2) {
+            in = new InflaterInputStream(raw);
+        } else {
+            return null;
+        }
+        try (InputStream stream = in) {
+            return stream.readAllBytes();
         }
     }
 
