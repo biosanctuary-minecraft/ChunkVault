@@ -442,6 +442,7 @@ public class SettingsScreen extends Screen {
                 } else {
                     dir = 1;
                 }
+                UiSound.click();
                 if (idx == 11) {
                     s.stepMinimapSize(dir);
                 } else {
@@ -454,6 +455,9 @@ public class SettingsScreen extends Screen {
             }
             if (idx == 8) {
                 return super.mouseClicked(event, isDoubleClick);
+            }
+            if (idx >= 0 && idx < ROW_COUNT && idx != 8 && (idx != 10 || s.minimapEnabled())) {
+                UiSound.click();
             }
             switch (idx) {
                 case 0 -> {
