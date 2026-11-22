@@ -2,11 +2,13 @@ package com.chunkvault.gui;
 
 import com.chunkvault.Lang;
 import com.chunkvault.state.RecordingState;
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
-import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
 
 import java.nio.file.Files;
 
@@ -19,6 +21,13 @@ public class NewProjectScreen extends Screen {
     private EditBox nameBox;
     private String typedKeep = "";
     private String error;
+
+    private int btnY0;
+    private int btnY1;
+    private int createX0;
+    private int createX1;
+    private int cancelX0;
+    private int cancelX1;
 
     public NewProjectScreen(MapScreen parent) {
         super(Lang.c("new.title"));
@@ -41,12 +50,12 @@ public class NewProjectScreen extends Screen {
         this.setInitialFocus(nameBox);
 
         int half = (innerW - 8) / 2;
-        this.addRenderableWidget(Button.builder(Lang.c("new.create"), b -> create())
-                .bounds(innerX, y0 + CARD_H - 30, half, 20)
-                .build());
-        this.addRenderableWidget(Button.builder(Lang.c("common.cancel"), b -> this.onClose())
-                .bounds(innerX + half + 8, y0 + CARD_H - 30, half, 20)
-                .build());
+        btnY0 = y0 + CARD_H - 32;
+        btnY1 = btnY0 + 22;
+        createX0 = innerX;
+        createX1 = innerX + half;
+        cancelX0 = createX1 + 8;
+        cancelX1 = innerX + innerW;
     }
 
     private void create() {
@@ -66,6 +75,44 @@ public class NewProjectScreen extends Screen {
         }
         Minecraft.getInstance().setScreenAndShow(parent);
         parent.showToast(Lang.s("toast.project_created", folder));
+    }
+
+    private void drawStyledButton(GuiGraphicsExtractor g, int x0, int x1, int y0, int y1,
+                                  String label, int mouseX, int mouseY,
+                                  int border, int bg, int bgHover, int textColor) {
+        boolean hover = mouseX >= x0 && mouseX < x1 && mouseY >= y0 && mouseY < y1;
+        g.fill(x0, y0, x1, y1, hover ? 0xFFFFFFFF : border);
+        g.fill(x0 + 1, y0 + 1, x1 - 1, y1 - 1, hover ? bgHover : bg);
+        int ty = y0 + ((y1 - y0) - 8) / 2;
+        g.centeredText(this.font, label, (x0 + x1) / 2, ty, textColor);
+    }
+
+    @Override
+    public boolean keyPressed(KeyEvent event) {
+        if (event.key() == InputConstants.KEY_RETURN || event.key() == InputConstants.KEY_NUMPADENTER) {
+            UiSound.click();
+            create();
+            return true;
+        }
+        return super.keyPressed(event);
+    }
+
+    @Override
+    public boolean mouseClicked(MouseButtonEvent event, boolean isDoubleClick) {
+        if (event.button() == InputConstants.MOUSE_BUTTON_LEFT
+                && event.y() >= btnY0 && event.y() < btnY1) {
+            if (event.x() >= createX0 && event.x() < createX1) {
+                UiSound.click();
+                create();
+                return true;
+            }
+            if (event.x() >= cancelX0 && event.x() < cancelX1) {
+                UiSound.click();
+                this.onClose();
+                return true;
+            }
+        }
+        return super.mouseClicked(event, isDoubleClick);
     }
 
     @Override
@@ -99,6 +146,11 @@ public class NewProjectScreen extends Screen {
             g.text(this.font, Lang.s("new.folder", RecordingState.sanitize(typedKeep.trim())),
                     innerX, y0 + 74, 0xFF70FF90, true);
         }
+
+        drawStyledButton(g, createX0, createX1, btnY0, btnY1, Lang.s("new.create"), mouseX, mouseY,
+                0xFF50C878, 0xFF1F5236, 0xFF2D6B48, 0xFF90FFB0);
+        drawStyledButton(g, cancelX0, cancelX1, btnY0, btnY1, Lang.s("common.cancel"), mouseX, mouseY,
+                0xFF4A5064, 0xFF1E222C, 0xFF343A4A, 0xFFFFFFFF);
 
         super.extractRenderState(g, mouseX, mouseY, partialTick);
     }
