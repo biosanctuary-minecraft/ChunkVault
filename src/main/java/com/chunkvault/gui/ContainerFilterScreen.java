@@ -6,7 +6,6 @@ import com.chunkvault.state.ChunkVaultSettings.ContainerCategory;
 import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
-import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.world.item.ItemStack;
@@ -30,6 +29,14 @@ public class ContainerFilterScreen extends Screen {
     private int listX1;
     private int listY1;
     private int scroll;
+    private int btnY0;
+    private int btnY1;
+    private int enX0;
+    private int enX1;
+    private int disX0;
+    private int disX1;
+    private int backX0;
+    private int backX1;
 
     public ContainerFilterScreen(Screen parent) {
         super(Lang.c("containers.title"));
@@ -46,19 +53,15 @@ public class ContainerFilterScreen extends Screen {
         listY1 = this.height - 44;
         clampScroll();
 
-        int btnY = this.height - 30;
+        btnY0 = this.height - 32;
+        btnY1 = btnY0 + 22;
         int w3 = (panelW - 12) / 3;
-        this.addRenderableWidget(Button.builder(Lang.c("containers.enable_all"),
-                        b -> ChunkVaultSettings.get().setAllContainers(true))
-                .bounds(listX0, btnY, w3, 20)
-                .build());
-        this.addRenderableWidget(Button.builder(Lang.c("containers.disable_all"),
-                        b -> ChunkVaultSettings.get().setAllContainers(false))
-                .bounds(listX0 + w3 + 6, btnY, w3, 20)
-                .build());
-        this.addRenderableWidget(Button.builder(Lang.c("common.back"), b -> this.onClose())
-                .bounds(listX0 + (w3 + 6) * 2, btnY, panelW - (w3 + 6) * 2, 20)
-                .build());
+        enX0 = listX0;
+        enX1 = enX0 + w3;
+        disX0 = enX1 + 6;
+        disX1 = disX0 + w3;
+        backX0 = disX1 + 6;
+        backX1 = listX1;
     }
 
     private ItemStack iconFor(ContainerCategory cat) {
@@ -147,7 +150,23 @@ public class ContainerFilterScreen extends Screen {
             g.fill(trackX0 + 1, thumbY, listX1 - 1, thumbY + thumbH, 0xFF5A6074);
         }
 
+        drawStyledButton(g, enX0, enX1, btnY0, btnY1, Lang.s("containers.enable_all"), mouseX, mouseY,
+                0xFF50C878, 0xFF1F5236, 0xFF2D6B48, 0xFF90FFB0);
+        drawStyledButton(g, disX0, disX1, btnY0, btnY1, Lang.s("containers.disable_all"), mouseX, mouseY,
+                0xFF9A3838, 0xFF4A2020, 0xFF6B2C2C, 0xFFFFB0B0);
+        drawStyledButton(g, backX0, backX1, btnY0, btnY1, Lang.s("common.back"), mouseX, mouseY,
+                0xFF4A5064, 0xFF1E222C, 0xFF343A4A, 0xFFFFFFFF);
+
         super.extractRenderState(g, mouseX, mouseY, partialTick);
+    }
+
+    private void drawStyledButton(GuiGraphicsExtractor g, int x0, int x1, int y0, int y1,
+                                  String label, int mouseX, int mouseY,
+                                  int border, int bg, int bgHover, int textColor) {
+        boolean hover = mouseX >= x0 && mouseX < x1 && mouseY >= y0 && mouseY < y1;
+        g.fill(x0, y0, x1, y1, hover ? 0xFFFFFFFF : border);
+        g.fill(x0 + 1, y0 + 1, x1 - 1, y1 - 1, hover ? bgHover : bg);
+        g.centeredText(this.font, label, (x0 + x1) / 2, y0 + 7, textColor);
     }
 
     @Override
@@ -156,10 +175,29 @@ public class ContainerFilterScreen extends Screen {
         double my = event.y();
         int contentRight = maxScroll() > 0 ? listX1 - 8 : listX1;
 
+        if (event.button() == InputConstants.MOUSE_BUTTON_LEFT && my >= btnY0 && my < btnY1) {
+            if (mx >= enX0 && mx < enX1) {
+                UiSound.click();
+                ChunkVaultSettings.get().setAllContainers(true);
+                return true;
+            }
+            if (mx >= disX0 && mx < disX1) {
+                UiSound.click();
+                ChunkVaultSettings.get().setAllContainers(false);
+                return true;
+            }
+            if (mx >= backX0 && mx < backX1) {
+                UiSound.click();
+                this.onClose();
+                return true;
+            }
+        }
+
         if (event.button() == InputConstants.MOUSE_BUTTON_LEFT
                 && mx >= listX0 && mx < contentRight && my >= listY0 && my < listY1) {
             int idx = (int) ((my - listY0 + scroll) / ROW_H);
             if (idx >= 0 && idx < categories.length) {
+                UiSound.click();
                 ContainerCategory cat = categories[idx];
                 ChunkVaultSettings s = ChunkVaultSettings.get();
                 s.setContainerEnabled(cat, !s.isContainerEnabled(cat));
