@@ -132,6 +132,11 @@ public class AreaInputScreen extends Screen {
         boxCz = null;
         boxRadius = null;
 
+        myPosX0 = 0;
+        myPosX1 = 0;
+        myPosY0 = 0;
+        myPosY1 = 0;
+
         if (!radiusMode) {
             boxX1 = makeNumberBox(innerX, y0 + 64, halfW, valX1, "X1");
             boxZ1 = makeNumberBox(innerX + halfW + 8, y0 + 64, halfW, valZ1, "Z1");
@@ -154,11 +159,6 @@ public class AreaInputScreen extends Screen {
             myPosY0 = y0 + 104;
             myPosY1 = myPosY0 + 20;
             this.setInitialFocus(boxRadius);
-        } else {
-            myPosX0 = 0;
-            myPosX1 = 0;
-            myPosY0 = 0;
-            myPosY1 = 0;
         }
 
         btnY0 = y0 + CARD_H - 32;
