@@ -31,6 +31,35 @@ public final class ChunkVaultSettings {
         }
     }
 
+    public enum MinimapHudItem {
+        STATUS("status", true),
+        CHUNKS("chunks", true),
+        COORDS("coords", true),
+        PROJECT("project", false),
+        PROJECT_SIZE("project_size", false),
+        CONTAINERS("containers", false),
+        ENTITIES("entities", false),
+        AREA("area", false),
+        DIMENSION("dimension", false),
+        BIOME("biome", false);
+
+        private final String key;
+        private final boolean defaultOn;
+
+        MinimapHudItem(String key, boolean defaultOn) {
+            this.key = key;
+            this.defaultOn = defaultOn;
+        }
+
+        public String key() {
+            return key;
+        }
+
+        public boolean defaultOn() {
+            return defaultOn;
+        }
+    }
+
     public static final int MINIMAP_MIN_SIZE = 64;
     public static final int MINIMAP_MAX_SIZE = 260;
     public static final int MINIMAP_SIZE_STEP = 8;
@@ -50,7 +79,20 @@ public final class ChunkVaultSettings {
     private volatile double minimapY = 0.0;
     private volatile int minimapSize = 112;
     private volatile double minimapZoom = 0.5;
+    private volatile boolean minimapHudEnabled = true;
+    private volatile boolean minimapHudAbove = false;
     private final EnumSet<ContainerCategory> enabledContainers = EnumSet.allOf(ContainerCategory.class);
+    private final EnumSet<MinimapHudItem> enabledHudItems = defaultHudItems();
+
+    private static EnumSet<MinimapHudItem> defaultHudItems() {
+        EnumSet<MinimapHudItem> set = EnumSet.noneOf(MinimapHudItem.class);
+        for (MinimapHudItem item : MinimapHudItem.values()) {
+            if (item.defaultOn()) {
+                set.add(item);
+            }
+        }
+        return set;
+    }
 
     private ChunkVaultSettings() {
         load();
@@ -198,6 +240,37 @@ public final class ChunkVaultSettings {
         save();
     }
 
+    public boolean minimapHudEnabled() {
+        return minimapHudEnabled;
+    }
+
+    public void setMinimapHudEnabled(boolean value) {
+        this.minimapHudEnabled = value;
+        save();
+    }
+
+    public boolean minimapHudAbove() {
+        return minimapHudAbove;
+    }
+
+    public void setMinimapHudAbove(boolean value) {
+        this.minimapHudAbove = value;
+        save();
+    }
+
+    public synchronized boolean isMinimapHudItemEnabled(MinimapHudItem item) {
+        return enabledHudItems.contains(item);
+    }
+
+    public synchronized void setMinimapHudItemEnabled(MinimapHudItem item, boolean enabled) {
+        if (enabled) {
+            enabledHudItems.add(item);
+        } else {
+            enabledHudItems.remove(item);
+        }
+        save();
+    }
+
     public void resetMinimapLayout() {
         this.minimapX = 0.0;
         this.minimapY = 0.0;
@@ -273,10 +346,19 @@ public final class ChunkVaultSettings {
             }
             minimapSize = clampSize(Integer.parseInt(p.getProperty("minimapSize", "112")));
             minimapZoom = snapZoom(Double.parseDouble(p.getProperty("minimapZoom", "0.5")));
+            minimapHudEnabled = Boolean.parseBoolean(p.getProperty("minimapHudEnabled", "true"));
+            minimapHudAbove = Boolean.parseBoolean(p.getProperty("minimapHudAbove", "false"));
             enabledContainers.clear();
             for (ContainerCategory c : ContainerCategory.values()) {
                 if (Boolean.parseBoolean(p.getProperty("container." + c.key(), "true"))) {
                     enabledContainers.add(c);
+                }
+            }
+            enabledHudItems.clear();
+            for (MinimapHudItem item : MinimapHudItem.values()) {
+                String def = Boolean.toString(item.defaultOn());
+                if (Boolean.parseBoolean(p.getProperty("minimapHud." + item.key(), def))) {
+                    enabledHudItems.add(item);
                 }
             }
         } catch (Exception e) {
@@ -298,8 +380,13 @@ public final class ChunkVaultSettings {
         p.setProperty("minimapY", Double.toString(minimapY));
         p.setProperty("minimapSize", Integer.toString(minimapSize));
         p.setProperty("minimapZoom", Double.toString(minimapZoom));
+        p.setProperty("minimapHudEnabled", Boolean.toString(minimapHudEnabled));
+        p.setProperty("minimapHudAbove", Boolean.toString(minimapHudAbove));
         for (ContainerCategory c : ContainerCategory.values()) {
             p.setProperty("container." + c.key(), Boolean.toString(enabledContainers.contains(c)));
+        }
+        for (MinimapHudItem item : MinimapHudItem.values()) {
+            p.setProperty("minimapHud." + item.key(), Boolean.toString(enabledHudItems.contains(item)));
         }
         try {
             Path f = file();
