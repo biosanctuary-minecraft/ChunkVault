@@ -18,8 +18,6 @@ import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.RenderPipelines;
-import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
 import net.minecraft.world.level.chunk.EmptyLevelChunk;
 import net.minecraft.world.level.chunk.LevelChunk;
 
@@ -43,7 +41,6 @@ public class MapScreen extends Screen {
     private static double lastScale = 1.0;
     private static boolean showPins = true;
     private static boolean followPlayer = false;
-    private static ItemStack chestIcon;
 
     private record PinGroup(ContainerDatabase.ContainerEntry top, int count, int sxDev, int syDev) {}
 
@@ -212,13 +209,6 @@ public class MapScreen extends Screen {
         if (this.getFocused() == filterSearchBox) {
             this.setFocused(null);
         }
-    }
-
-    private static ItemStack chestButtonIcon() {
-        if (chestIcon == null) {
-            chestIcon = new ItemStack(Items.CHEST);
-        }
-        return chestIcon;
     }
 
     private void recenterOnPlayer() {
@@ -713,7 +703,12 @@ public class MapScreen extends Screen {
             hoverDbBtn = mouseX >= dbX0 && mouseX < dbX1 && mouseY >= btnY0 && mouseY < btnY1;
             g.fill(dbX0, btnY0, dbX1, btnY1, 0xFFFFFFFF);
             g.fill(dbX0 + 1, btnY0 + 1, dbX1 - 1, btnY1 - 1, hoverDbBtn ? 0xFF9E7022 : 0xFF7A5618);
-            g.item(chestButtonIcon(), dbX0 + 3, btnY0);
+            int ix = dbX0 + 5;
+            int iy = btnY0 + 4;
+            g.fill(ix, iy, ix + 12, iy + 3, 0xFFFFFFFF);
+            g.fill(ix, iy + 3, ix + 12, iy + 4, 0xFF4A320C);
+            g.fill(ix, iy + 4, ix + 12, iy + 8, 0xFFE6EBF2);
+            g.fill(ix + 5, iy + 2, ix + 7, iy + 5, 0xFFFFE478);
             areaX0 = dbX1 + 5;
             boolean areaHighlighted = areaPanelOpen || selectingArea || AreaPlan.isActive();
             areaX1 = drawTopButton(g, areaX0, Lang.s("button.area"),
