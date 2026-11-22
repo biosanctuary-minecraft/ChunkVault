@@ -303,7 +303,7 @@ public class ChunkVaultClient implements ClientModInitializer {
             if (tickCounter % 10 == 0 && RecordingState.get().isActive()) {
                 AreaPlan.checkAutoStop();
             }
-            if (tickCounter % 40 == 0 && RecordingState.get().isActive()) {
+            if (tickCounter % 20 == 0 && RecordingState.get().isActive()) {
                 var manager = RecordingState.get().saveManager();
                 var level = Minecraft.getInstance().level;
                 if (manager != null && level != null) {
