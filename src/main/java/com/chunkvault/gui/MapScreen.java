@@ -18,6 +18,8 @@ import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.chunk.EmptyLevelChunk;
 import net.minecraft.world.level.chunk.LevelChunk;
 
@@ -31,6 +33,7 @@ import java.util.Map;
 public class MapScreen extends Screen {
 
     private static final int TOP_BAR = 22;
+    private static ItemStack shulkerIcon;
     private static final int BOTTOM_BAR = 18;
     private static final double MIN_SCALE = 0.125;
     private static final double MAX_SCALE = 16.0;
@@ -209,6 +212,13 @@ public class MapScreen extends Screen {
         if (this.getFocused() == filterSearchBox) {
             this.setFocused(null);
         }
+    }
+
+    private static ItemStack shulkerButtonIcon() {
+        if (shulkerIcon == null) {
+            shulkerIcon = new ItemStack(Items.SHULKER_BOX);
+        }
+        return shulkerIcon;
     }
 
     private void recenterOnPlayer() {
@@ -699,16 +709,15 @@ public class MapScreen extends Screen {
             btnX1 = drawTopButton(g, btnX0, recording ? Lang.s("button.stop") : Lang.s("button.record"),
                     recording ? 0xFF7A2020 : 0xFFB03030, recording ? 0xFF9E2C2C : 0xFFD84848, mouseX, mouseY);
             dbX0 = btnX1 + 5;
-            dbX1 = dbX0 + 22;
+            dbX1 = dbX0 + 20;
             hoverDbBtn = mouseX >= dbX0 && mouseX < dbX1 && mouseY >= btnY0 && mouseY < btnY1;
             g.fill(dbX0, btnY0, dbX1, btnY1, 0xFFFFFFFF);
-            g.fill(dbX0 + 1, btnY0 + 1, dbX1 - 1, btnY1 - 1, hoverDbBtn ? 0xFF9E7022 : 0xFF7A5618);
-            int ix = dbX0 + 5;
-            int iy = btnY0 + 4;
-            g.fill(ix, iy, ix + 12, iy + 3, 0xFFFFFFFF);
-            g.fill(ix, iy + 3, ix + 12, iy + 4, 0xFF4A320C);
-            g.fill(ix, iy + 4, ix + 12, iy + 8, 0xFFE6EBF2);
-            g.fill(ix + 5, iy + 2, ix + 7, iy + 5, 0xFFFFE478);
+            g.fill(dbX0 + 1, btnY0 + 1, dbX1 - 1, btnY1 - 1, hoverDbBtn ? 0xFF6B468C : 0xFF4E3266);
+            g.pose().pushMatrix();
+            g.pose().translate(dbX0 + 4.0f, btnY0 + 2.0f);
+            g.pose().scale(0.75f, 0.75f);
+            g.item(shulkerButtonIcon(), 0, 0);
+            g.pose().popMatrix();
             areaX0 = dbX1 + 5;
             boolean areaHighlighted = areaPanelOpen || selectingArea || AreaPlan.isActive();
             areaX1 = drawTopButton(g, areaX0, Lang.s("button.area"),
