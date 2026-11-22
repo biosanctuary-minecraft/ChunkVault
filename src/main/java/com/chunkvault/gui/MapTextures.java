@@ -1,6 +1,8 @@
 package com.chunkvault.gui;
 
 import com.mojang.blaze3d.platform.NativeImage;
+import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.textures.FilterMode;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.resources.Identifier;
@@ -20,13 +22,35 @@ final class MapTextures {
     private static final int DIRTY_CHUNKS_PER_FRAME = 96;
     private static final long EVICT_AFTER_MS = 15000L;
 
+    private static final class RegionTexture extends DynamicTexture {
+        private boolean linear;
+
+        RegionTexture(String name, int size) {
+            super(name, size, size, true);
+        }
+
+        void setLinear(boolean smooth) {
+            if (this.linear != smooth) {
+                this.linear = smooth;
+                this.sampler = RenderSystem.getSamplerCache().getClampToEdge(
+                        smooth ? FilterMode.LINEAR : FilterMode.NEAREST);
+            }
+        }
+    }
+
     static final class Lod {
-        DynamicTexture tex;
+        RegionTexture tex;
         NativeImage img;
         Identifier id;
         int size;
         boolean needsUpload;
         boolean ready;
+
+        void setLinear(boolean smooth) {
+            if (tex != null) {
+                tex.setLinear(smooth);
+            }
+        }
     }
 
     private static final class Region {
@@ -108,6 +132,11 @@ final class MapTextures {
 
     static Lod acquire(String dimension, int rx, int rz, int lodIdx,
                        Map<Long, MapCache.ChunkColors> cache, long frame) {
+        return acquire(dimension, rx, rz, lodIdx, cache, frame, false);
+    }
+
+    static Lod acquire(String dimension, int rx, int rz, int lodIdx,
+                       Map<Long, MapCache.ChunkColors> cache, long frame, boolean linear) {
         if (!ok) {
             return null;
         }
@@ -120,7 +149,11 @@ final class MapTextures {
             if (lod == null) {
                 int cost = lodIdx == 0 ? 2 : 1;
                 if (buildLeft < cost) {
-                    return fallbackReady(r, lodIdx);
+                    Lod fb = fallbackReady(r, lodIdx);
+                    if (fb != null) {
+                        fb.setLinear(linear);
+                    }
+                    return fb;
                 }
                 buildLeft -= cost;
                 lod = createLod(lodIdx);
@@ -134,7 +167,11 @@ final class MapTextures {
                 lod.needsUpload = false;
                 lod.ready = true;
             }
-            return lod.ready ? lod : fallbackReady(r, lodIdx);
+            Lod out = lod.ready ? lod : fallbackReady(r, lodIdx);
+            if (out != null) {
+                out.setLinear(linear);
+            }
+            return out;
         } catch (Throwable t) {
             fail(t);
             return null;
@@ -158,7 +195,7 @@ final class MapTextures {
     private static Lod createLod(int lodIdx) {
         int size = SIZE[lodIdx];
         int n = ++counter;
-        DynamicTexture tex = new DynamicTexture("chunkvault_map_" + n, size, size, true);
+        RegionTexture tex = new RegionTexture("chunkvault_map_" + n, size);
         NativeImage img = tex.getPixels();
         if (img == null) {
             tex.close();
