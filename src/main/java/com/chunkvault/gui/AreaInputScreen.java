@@ -5,10 +5,11 @@ import com.chunkvault.Lang;
 import com.chunkvault.state.AreaPlan;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
-import net.minecraft.client.gui.components.Button;
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 
 public class AreaInputScreen extends Screen {
@@ -37,6 +38,25 @@ public class AreaInputScreen extends Screen {
     private EditBox boxRadius;
 
     private String error;
+
+    private int modeY0;
+    private int modeY1;
+    private int cornersX0;
+    private int cornersX1;
+    private int radiusX0;
+    private int radiusX1;
+
+    private int myPosX0;
+    private int myPosX1;
+    private int myPosY0;
+    private int myPosY1;
+
+    private int btnY0;
+    private int btnY1;
+    private int applyX0;
+    private int applyX1;
+    private int cancelX0;
+    private int cancelX1;
 
     public AreaInputScreen(MapScreen parent) {
         super(Lang.c("area.input.title"));
@@ -97,17 +117,12 @@ public class AreaInputScreen extends Screen {
         int innerW = CARD_W - 28;
         int halfW = (innerW - 8) / 2;
 
-        Button cornersBtn = Button.builder(Lang.c("area.input.mode_corners"), b -> switchMode(false))
-                .bounds(innerX, y0 + 28, halfW, 18)
-                .build();
-        cornersBtn.active = radiusMode;
-        this.addRenderableWidget(cornersBtn);
-
-        Button radiusBtn = Button.builder(Lang.c("area.input.mode_radius"), b -> switchMode(true))
-                .bounds(innerX + halfW + 8, y0 + 28, halfW, 18)
-                .build();
-        radiusBtn.active = !radiusMode;
-        this.addRenderableWidget(radiusBtn);
+        modeY0 = y0 + 27;
+        modeY1 = modeY0 + 20;
+        cornersX0 = innerX;
+        cornersX1 = innerX + halfW;
+        radiusX0 = cornersX1 + 8;
+        radiusX1 = innerX + innerW;
 
         boxX1 = null;
         boxZ1 = null;
@@ -134,18 +149,24 @@ public class AreaInputScreen extends Screen {
             this.addRenderableWidget(boxCx);
             this.addRenderableWidget(boxCz);
             this.addRenderableWidget(boxRadius);
-            this.addRenderableWidget(Button.builder(Lang.c("area.input.my_pos"), b -> fillMyPos())
-                    .bounds(innerX + halfW + 8, y0 + 104, halfW, 20)
-                    .build());
+            myPosX0 = innerX + halfW + 8;
+            myPosX1 = innerX + innerW;
+            myPosY0 = y0 + 104;
+            myPosY1 = myPosY0 + 20;
             this.setInitialFocus(boxRadius);
+        } else {
+            myPosX0 = 0;
+            myPosX1 = 0;
+            myPosY0 = 0;
+            myPosY1 = 0;
         }
 
-        this.addRenderableWidget(Button.builder(Lang.c("area.input.apply"), b -> apply())
-                .bounds(innerX, y0 + CARD_H - 30, halfW, 20)
-                .build());
-        this.addRenderableWidget(Button.builder(Lang.c("common.cancel"), b -> this.onClose())
-                .bounds(innerX + halfW + 8, y0 + CARD_H - 30, halfW, 20)
-                .build());
+        btnY0 = y0 + CARD_H - 32;
+        btnY1 = btnY0 + 22;
+        applyX0 = innerX;
+        applyX1 = innerX + halfW;
+        cancelX0 = applyX1 + 8;
+        cancelX1 = innerX + innerW;
     }
 
     private EditBox makeNumberBox(int x, int y, int w, String value, String label) {
@@ -277,6 +298,7 @@ public class AreaInputScreen extends Screen {
 
         g.fill(x0 - 1, y0 - 1, x1 + 1, y1 + 1, 0xFF3A3A48);
         g.fill(x0, y0, x1, y1, 0xFF14161C);
+        g.fill(x0, y0, x1, y0 + 2, 0xFF38D8FF);
 
         g.centeredText(this.font, Lang.s("area.input.title"), this.width / 2, y0 + 10, 0xFFFFFFFF);
 
@@ -301,7 +323,76 @@ public class AreaInputScreen extends Screen {
             }
         }
 
+        drawStyledButton(g, cornersX0, cornersX1, modeY0, modeY1, Lang.s("area.input.mode_corners"), mouseX, mouseY,
+                !radiusMode ? 0xFF38D8FF : 0xFF4A5064,
+                !radiusMode ? 0xFF1A3A4A : 0xFF1E222C,
+                !radiusMode ? 0xFF1A3A4A : 0xFF343A4A,
+                !radiusMode ? 0xFFE0F8FF : 0xFFB0B8C8);
+        drawStyledButton(g, radiusX0, radiusX1, modeY0, modeY1, Lang.s("area.input.mode_radius"), mouseX, mouseY,
+                radiusMode ? 0xFF38D8FF : 0xFF4A5064,
+                radiusMode ? 0xFF1A3A4A : 0xFF1E222C,
+                radiusMode ? 0xFF1A3A4A : 0xFF343A4A,
+                radiusMode ? 0xFFE0F8FF : 0xFFB0B8C8);
+
+        if (radiusMode) {
+            drawStyledButton(g, myPosX0, myPosX1, myPosY0, myPosY1, Lang.s("area.input.my_pos"), mouseX, mouseY,
+                    0xFF3B6E80, 0xFF1A2E3A, 0xFF284858, 0xFFE0F4FF);
+        }
+
+        drawStyledButton(g, applyX0, applyX1, btnY0, btnY1, Lang.s("area.input.apply"), mouseX, mouseY,
+                0xFF50C878, 0xFF1F5236, 0xFF2D6B48, 0xFF90FFB0);
+        drawStyledButton(g, cancelX0, cancelX1, btnY0, btnY1, Lang.s("common.cancel"), mouseX, mouseY,
+                0xFF4A5064, 0xFF1E222C, 0xFF343A4A, 0xFFFFFFFF);
+
         super.extractRenderState(g, mouseX, mouseY, partialTick);
+    }
+
+    private void drawStyledButton(GuiGraphicsExtractor g, int x0, int x1, int y0, int y1,
+                                  String label, int mouseX, int mouseY,
+                                  int border, int bg, int bgHover, int textColor) {
+        boolean hover = mouseX >= x0 && mouseX < x1 && mouseY >= y0 && mouseY < y1;
+        g.fill(x0, y0, x1, y1, hover ? 0xFFFFFFFF : border);
+        g.fill(x0 + 1, y0 + 1, x1 - 1, y1 - 1, hover ? bgHover : bg);
+        int ty = y0 + ((y1 - y0) - 8) / 2;
+        g.centeredText(this.font, label, (x0 + x1) / 2, ty, textColor);
+    }
+
+    @Override
+    public boolean mouseClicked(MouseButtonEvent event, boolean isDoubleClick) {
+        if (event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+            double mx = event.x();
+            double my = event.y();
+            if (my >= modeY0 && my < modeY1) {
+                if (mx >= cornersX0 && mx < cornersX1 && radiusMode) {
+                    UiSound.click();
+                    switchMode(false);
+                    return true;
+                }
+                if (mx >= radiusX0 && mx < radiusX1 && !radiusMode) {
+                    UiSound.click();
+                    switchMode(true);
+                    return true;
+                }
+            }
+            if (radiusMode && mx >= myPosX0 && mx < myPosX1 && my >= myPosY0 && my < myPosY1) {
+                UiSound.click();
+                fillMyPos();
+                return true;
+            }
+            if (my >= btnY0 && my < btnY1) {
+                if (mx >= applyX0 && mx < applyX1) {
+                    UiSound.click();
+                    apply();
+                    return true;
+                }
+                if (mx >= cancelX0 && mx < cancelX1) {
+                    UiSound.click();
+                    this.onClose();
+                    return true;
+                }
+            }
+        }
+        return super.mouseClicked(event, isDoubleClick);
     }
 
     @Override
